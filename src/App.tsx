@@ -5,7 +5,10 @@ import {
   CheckCircle2,
   Clock3,
   Download,
+  Eye,
+  EyeOff,
   GitBranch,
+  KeyRound,
   Search,
   ShieldCheck,
   Sparkles,
@@ -21,19 +24,23 @@ type Student = {
   batch: string
 }
 type AttendanceState = Record<string, AttendanceStatus>
-type GitHubUser = {
-  login: string
-  avatar_url?: string
-  html_url?: string
-}
 type IssueSummary = {
   title: string
   count: number
   detail: string
 }
 
-const GITHUB_CLIENT_ID = 'Ov23liLcFMbThYi60P1E'
 const DEFAULT_CSV_URL = '/students.csv'
+const GITHUB_PAT_KEY = 'attendly-github-pat'
+const GITHUB_PROXY_KEY = 'attendly-github-proxy'
+const DEFAULT_PROXY_URL = 'https://r.jina.ai/http://'
+const proxyOptions = [
+  'https://r.jina.ai/http://',
+  'https://r.jina.ai/http://https://',
+  'https://api.allorigins.win/raw?url=',
+  'https://api.codetabs.com/v1/proxy?quest=',
+  'https://cors.isomorphic-git.org/',
+]
 const classNames = ['AI-101', 'BIO-202', 'CS-303', 'MATH-404', 'UX-505']
 
 const defaultStudents: Student[] = [
@@ -102,60 +109,6 @@ function parseStudentsCsv(csvText: string): Student[] {
     })
 }
 
-async function fetchGitHubUser(token: string): Promise<GitHubUser> {
-  const response = await fetch('https://api.github.com/user', {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/vnd.github+json',
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error('Unable to fetch your GitHub profile.')
-  }
-
-  return response.json()
-}
-
-async function pollForGitHubToken(clientId: string, deviceCode: string, intervalSeconds: number) {
-  const pollIntervalMs = (intervalSeconds || 5) * 1000
-
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const response = await fetch('https://github.com/login/oauth/access_token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        client_id: clientId,
-        device_code: deviceCode,
-        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-      }),
-    })
-
-    const data = await response.json()
-
-    if (data.access_token) {
-      return data
-    }
-
-    if (data.error === 'authorization_pending') {
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
-      continue
-    }
-
-    if (data.error === 'slow_down') {
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs + 5000))
-      continue
-    }
-
-    throw new Error(data.error_description || 'GitHub OAuth device flow failed.')
-  }
-
-  throw new Error('GitHub approval timed out. Please try again.')
-}
-
 function App() {
   const [students, setStudents] = useState<Student[]>(defaultStudents)
   const [attendance, setAttendance] = useState<AttendanceState>(() => defaultAttendance)
@@ -163,34 +116,34 @@ function App() {
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [statusFilter, setStatusFilter] = useState<'all' | AttendanceStatus>('all')
   const [classFilter, setClassFilter] = useState<'all' | string>('all')
-  const [githubUser, setGithubUser] = useState<GitHubUser | null>(null)
+  const [githubPat, setGithubPat] = useState('')
+  const [proxyUrl, setProxyUrl] = useState(DEFAULT_PROXY_URL)
+  const [showPat, setShowPat] = useState(false)
   const [statusMessage, setStatusMessage] = useState('Static-only mode is active. No backend required.')
-  const [isAuthenticating, setIsAuthenticating] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
 
   useEffect(() => {
     const persistedAttendance = localStorage.getItem('attendly-attendance')
-    const persistedUser = localStorage.getItem('attendly-user')
+    const persistedPat = localStorage.getItem(GITHUB_PAT_KEY)
+    const persistedProxy = localStorage.getItem(GITHUB_PROXY_KEY)
 
     if (persistedAttendance) {
       setAttendance(JSON.parse(persistedAttendance))
     }
 
-    if (persistedUser) {
-      setGithubUser(JSON.parse(persistedUser))
-      setStatusMessage('GitHub session restored locally.')
+    if (persistedPat) {
+      setGithubPat(persistedPat)
+      setStatusMessage('GitHub PAT loaded from this browser.')
+    }
+
+    if (persistedProxy) {
+      setProxyUrl(persistedProxy)
     }
   }, [])
 
   useEffect(() => {
     localStorage.setItem('attendly-attendance', JSON.stringify(attendance))
   }, [attendance])
-
-  useEffect(() => {
-    if (githubUser) {
-      localStorage.setItem('attendly-user', JSON.stringify(githubUser))
-    }
-  }, [githubUser])
 
   useEffect(() => {
     fetch(DEFAULT_CSV_URL)
@@ -289,51 +242,52 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
-  const connectGitHub = async () => {
-    setIsAuthenticating(true)
+  const updateGithubPat = (nextValue: string) => {
+    setGithubPat(nextValue)
+
+    if (!nextValue.trim()) {
+      localStorage.removeItem(GITHUB_PAT_KEY)
+      return
+    }
+
+    localStorage.setItem(GITHUB_PAT_KEY, nextValue)
+  }
+
+  const updateProxyUrl = (nextValue: string) => {
+    const cleaned = nextValue.trim() || DEFAULT_PROXY_URL
+    setProxyUrl(cleaned)
+    localStorage.setItem(GITHUB_PROXY_KEY, cleaned)
+  }
+
+  const tryGithubFallback = async () => {
+    if (!githubPat.trim()) {
+      setStatusMessage('Paste a GitHub PAT above before using the fallback browser-only proxy mode.')
+      return
+    }
+
+    const targetUrl = 'https://api.github.com/user'
+    const proxyTarget = `${proxyUrl.replace(/\/$/, '')}${targetUrl}`
 
     try {
-      const deviceResponse = await fetch('https://github.com/login/device/code', {
-        method: 'POST',
+      const response = await fetch(proxyTarget, {
         headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
+          Authorization: `Bearer ${githubPat}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
         },
-        body: JSON.stringify({
-          client_id: GITHUB_CLIENT_ID,
-          scope: 'read:user',
-        }),
       })
 
-      if (!deviceResponse.ok) {
-        throw new Error('GitHub device flow could not be started. Check your OAuth app settings.')
+      if (!response.ok) {
+        throw new Error(`GitHub fallback failed with ${response.status}.`)
       }
 
-      const device = await deviceResponse.json()
-
-      if (!device.device_code) {
-        throw new Error(device.error_description || 'Unable to start the GitHub device flow.')
-      }
-
-      const deviceUrl = 'https://github.com/login/device'
-      window.open(deviceUrl, '_blank', 'noopener,noreferrer')
-      setStatusMessage(
-        `Open GitHub and enter this code: ${device.user_code}. Device URL: ${deviceUrl}`,
-      )
-
-      const tokenData = await pollForGitHubToken(GITHUB_CLIENT_ID, device.device_code, device.interval || 5)
-      const user = await fetchGitHubUser(tokenData.access_token)
-
-      setGithubUser(user)
-      setStatusMessage(`Signed in as ${user.login}. Your browser session is authenticated.`)
+      const payload = await response.json()
+      setStatusMessage(`Fallback mode connected to GitHub as ${payload.login || 'user'}.`)
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Fallback mode failed.'
       setStatusMessage(
-        error instanceof Error
-          ? `${error.message} If GitHub blocks the browser call, open https://github.com/login/device and enter the code manually.`
-          : 'GitHub sign-in failed.',
+        `Browser fallback failed: ${message}. This is only a last-resort static workaround and can be blocked by public proxy rate limits or CORS restrictions.`,
       )
-    } finally {
-      setIsAuthenticating(false)
     }
   }
 
@@ -376,14 +330,10 @@ function App() {
               </h1>
             </div>
 
-            <button
-              type="button"
-              onClick={connectGitHub}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm font-medium text-white transition hover:border-sky-500 hover:text-sky-200"
-            >
-              <GitBranch className="h-4 w-4" />
-              {isAuthenticating ? 'Connecting...' : githubUser ? `Signed in as ${githubUser.login}` : 'Connect GitHub'}
-            </button>
+            <div className="flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-800/80 px-3 py-2 text-xs text-slate-300">
+              <KeyRound className="h-4 w-4 text-sky-300" />
+              <span>{githubPat ? 'PAT stored locally' : 'No PAT saved yet'}</span>
+            </div>
           </div>
 
           <div className="mt-6 grid gap-4 md:grid-cols-4">
@@ -562,8 +512,64 @@ function App() {
             </div>
 
             <div className="rounded-[24px] border border-slate-800 bg-slate-900/80 p-5 shadow-glow">
-              <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Sync</p>
-              <h3 className="mt-2 text-xl font-semibold text-white">Static integrations</h3>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Access</p>
+                  <h3 className="mt-2 text-xl font-semibold text-white">GitHub PAT</h3>
+                </div>
+                <GitBranch className="h-5 w-5 text-sky-300" />
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
+                <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-400">Fallback proxy URL</label>
+                <select
+                  value={proxyUrl}
+                  onChange={(event) => updateProxyUrl(event.target.value)}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none"
+                >
+                  {proxyOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  value={proxyUrl}
+                  onChange={(event) => updateProxyUrl(event.target.value)}
+                  placeholder="https://r.jina.ai/http://"
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                />
+
+                <p className="mt-2 text-xs text-slate-400">
+                  Public proxies are not guaranteed, may rate-limit, and are not production-safe. This is only a last-resort static fallback.
+                </p>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
+                <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-400">Personal access token</label>
+                <div className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2">
+                  <input
+                    type={showPat ? 'text' : 'password'}
+                    value={githubPat}
+                    onChange={(event) => updateGithubPat(event.target.value)}
+                    placeholder="ghp_xxxxxxxxxxxxx"
+                    className="w-full bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPat((current) => !current)}
+                    className="text-slate-300 transition hover:text-sky-200"
+                    aria-label={showPat ? 'Hide PAT' : 'Show PAT'}
+                  >
+                    {showPat ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+
+                <p className="mt-3 text-xs text-slate-400">
+                  Stored in localStorage on this browser only. No backend or serverless token exchange is used.
+                </p>
+              </div>
 
               <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
                 <p className="font-medium text-white">Status</p>
@@ -571,6 +577,13 @@ function App() {
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={tryGithubFallback}
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-sky-500"
+                >
+                  Try fallback GitHub
+                </button>
                 <button
                   type="button"
                   onClick={syncToHuggingFace}
@@ -581,10 +594,16 @@ function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setStatusMessage('This static app keeps its data in the browser and exports CSV files locally.')}
+                  onClick={() => {
+                    setGithubPat('')
+                    setProxyUrl(DEFAULT_PROXY_URL)
+                    localStorage.removeItem(GITHUB_PAT_KEY)
+                    localStorage.setItem(GITHUB_PROXY_KEY, DEFAULT_PROXY_URL)
+                    setStatusMessage('GitHub PAT and fallback proxy were cleared from this browser.')
+                  }}
                   className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-slate-500"
                 >
-                  No backend
+                  Clear PAT
                 </button>
               </div>
             </div>
@@ -601,7 +620,7 @@ function App() {
               </div>
 
               <p className="mt-4 text-sm leading-6 text-slate-300">
-                This site is intentionally static. The roster is retrieved as CSV, attendance is stored in browser storage, and GitHub OAuth flows through the browser’s device-code protocol without a server-side app.
+                This site is intentionally static. The roster is retrieved as CSV, attendance is stored in browser storage, and your GitHub PAT stays in localStorage on this browser only.
               </p>
             </div>
           </aside>
