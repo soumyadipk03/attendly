@@ -22,19 +22,15 @@ npm install
 npm run dev
 ```
 
-## Environment variables
+## GitHub and Hugging Face setup
 
-Copy `.env.example` to `.env.local` and fill in the values:
+This app does not require a local `.env` file. The browser login button uses the static GitHub OAuth client ID directly, and the repo-level automation uses GitHub repository secrets and variables.
 
-```bash
-cp .env.example .env.local
-```
+Set these in GitHub:
 
-Then update:
-
-- `VITE_GITHUB_CLIENT_ID` with your GitHub OAuth app client ID
-- `VITE_HF_CSV_URL` with the public CSV URL for the student roster
-- `VITE_HF_REPO` with the Hugging Face repo name if you want to reference it later
+- `OAUTH_CLIENTID` = `Ov23liLcFMbThYi60P1E`
+- `HF_API` = your Hugging Face API token
+- `HF_REPO` = your Hugging Face dataset repo name
 
 ## Deployment
 

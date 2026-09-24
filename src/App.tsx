@@ -32,6 +32,8 @@ type IssueSummary = {
   detail: string
 }
 
+const GITHUB_CLIENT_ID = 'Ov23liLcFMbThYi60P1E'
+const DEFAULT_CSV_URL = '/students.csv'
 const classNames = ['AI-101', 'BIO-202', 'CS-303', 'MATH-404', 'UX-505']
 
 const defaultStudents: Student[] = [
@@ -191,9 +193,7 @@ function App() {
   }, [githubUser])
 
   useEffect(() => {
-    const csvUrl = import.meta.env.VITE_HF_CSV_URL ?? '/students.csv'
-
-    fetch(csvUrl)
+    fetch(DEFAULT_CSV_URL)
       .then((response) => {
         if (!response.ok) {
           return null
@@ -210,7 +210,7 @@ function App() {
         setStudents(parsed)
       })
       .catch(() => {
-        setStatusMessage('Using the bundled sample roster because the HF CSV is not reachable yet.')
+        setStatusMessage('Using the bundled sample roster because the local CSV is not reachable yet.')
       })
   }, [])
 
@@ -290,8 +290,6 @@ function App() {
   }
 
   const connectGitHub = async () => {
-    const clientId = import.meta.env.VITE_GITHUB_CLIENT_ID || 'Ov23liLcFMbThYi60P1E'
-
     setIsAuthenticating(true)
 
     try {
@@ -302,7 +300,7 @@ function App() {
           Accept: 'application/json',
         },
         body: JSON.stringify({
-          client_id: clientId,
+          client_id: GITHUB_CLIENT_ID,
           scope: 'read:user',
         }),
       })
@@ -317,30 +315,30 @@ function App() {
         throw new Error(device.error_description || 'Unable to start the GitHub device flow.')
       }
 
-      window.open('https://github.com/login/device', '_blank', 'noopener,noreferrer')
+      const deviceUrl = 'https://github.com/login/device'
+      window.open(deviceUrl, '_blank', 'noopener,noreferrer')
       setStatusMessage(
-        `Open GitHub and enter this code: ${device.user_code}. Device URL: https://github.com/login/device`,
+        `Open GitHub and enter this code: ${device.user_code}. Device URL: ${deviceUrl}`,
       )
 
-      const tokenData = await pollForGitHubToken(clientId, device.device_code, device.interval || 5)
+      const tokenData = await pollForGitHubToken(GITHUB_CLIENT_ID, device.device_code, device.interval || 5)
       const user = await fetchGitHubUser(tokenData.access_token)
 
       setGithubUser(user)
       setStatusMessage(`Signed in as ${user.login}. Your browser session is authenticated.`)
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : 'GitHub sign-in failed.')
+      setStatusMessage(
+        error instanceof Error
+          ? `${error.message} If GitHub blocks the browser call, open https://github.com/login/device and enter the code manually.`
+          : 'GitHub sign-in failed.',
+      )
     } finally {
       setIsAuthenticating(false)
     }
   }
 
   const syncToHuggingFace = async () => {
-    const csvUrl = import.meta.env.VITE_HF_CSV_URL
-
-    if (!csvUrl) {
-      setStatusMessage('Set VITE_HF_CSV_URL in .env.local to enable a remote roster sync.')
-      return
-    }
+    const csvUrl = '/students.csv'
 
     setIsSyncing(true)
 
