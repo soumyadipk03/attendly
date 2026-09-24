@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs'
 const repo = process.env.GITHUB_REPOSITORY || 'owner/repo'
 const token = process.env.GITHUB_TOKEN
 const hfToken = process.env.HF_TOKEN
-const hfRepo = process.env.HF_REPO
+const hfRepo = 'soumyadipk03/attendly'
 
 const headers = {
   'Accept': 'application/vnd.github+json',

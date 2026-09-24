@@ -18,10 +18,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      VITE_HF_CSV_URL: ${{ vars.VITE_HF_CSV_URL || 'https://huggingface.co/datasets/your-org/your-dataset/resolve/main/students.csv' }}
-      VITE_HF_REPO: ${{ vars.VITE_HF_REPO || 'your-org/your-dataset' }}
+      VITE_HF_CSV_URL: https://huggingface.co/datasets/soumyadipk03/attendly/resolve/main/students.csv
+      VITE_HF_REPO: soumyadipk03/attendly
       HF_API: ${{ secrets.HF_API }}
-      HF_REPO: ${{ vars.HF_REPO }}
+      HF_REPO: soumyadipk03/attendly
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

@@ -26,10 +26,11 @@ npm run dev
 
 This app does not require a local `.env` file. The browser PAT flow is handled entirely on the client side, and the repo-level automation uses GitHub repository secrets and variables.
 
-Set these in GitHub:
+Set this in GitHub:
 
 - `HF_API` = your Hugging Face API token
-- `HF_REPO` = your Hugging Face dataset repo name
+
+The Hugging Face dataset repo is fixed to the user account repo: `soumyadipk03/attendly`.
 
 No `OAUTH_CLIENTID` secret is required for this static-only setup.
 

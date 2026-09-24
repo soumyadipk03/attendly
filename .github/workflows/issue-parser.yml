@@ -12,8 +12,8 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUB_REPOSITORY: ${{ github.repository }}
       HF_API: ${{ secrets.HF_API }}
-      HF_REPO: ${{ vars.HF_REPO }}
-      HF_API_URL: ${{ vars.HF_API_URL || 'https://huggingface.co/api' }}
+      HF_REPO: soumyadipk03/attendly
+      HF_API_URL: https://huggingface.co/api
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

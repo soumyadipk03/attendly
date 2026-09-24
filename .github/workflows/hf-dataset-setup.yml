@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HF_API: ${{ secrets.HF_API }}
-      HF_ORG: ${{ vars.HF_ORG }}
-      HF_REPO: ${{ vars.HF_REPO }}
+      HF_ORG: soumyadipk03
+      HF_REPO: attendly
       HF_REPO_TYPE: dataset
-      HF_API_URL: ${{ vars.HF_API_URL || 'https://huggingface.co/api' }}
+      HF_API_URL: https://huggingface.co/api
     steps:
       - name: Create or verify dataset repo
         shell: bash
