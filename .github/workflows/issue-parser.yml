@@ -14,7 +14,6 @@ jobs:
       HF_API: ${{ secrets.HF_API }}
       HF_REPO: ${{ vars.HF_REPO }}
       HF_API_URL: ${{ vars.HF_API_URL || 'https://huggingface.co/api' }}
-      VITE_GITHUB_CLIENT_ID: ${{ secrets.OAUTH_CLIENTID || 'Ov23liLcFMbThYi60P1E' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

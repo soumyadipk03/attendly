@@ -18,7 +18,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      VITE_GITHUB_CLIENT_ID: ${{ secrets.OAUTH_CLIENTID || 'Ov23liLcFMbThYi60P1E' }}
       VITE_HF_CSV_URL: ${{ vars.VITE_HF_CSV_URL || 'https://huggingface.co/datasets/your-org/your-dataset/resolve/main/students.csv' }}
       VITE_HF_REPO: ${{ vars.VITE_HF_REPO || 'your-org/your-dataset' }}
       HF_API: ${{ secrets.HF_API }}

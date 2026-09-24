@@ -32,15 +32,6 @@ type IssueSummary = {
 
 const DEFAULT_CSV_URL = '/students.csv'
 const GITHUB_PAT_KEY = 'attendly-github-pat'
-const GITHUB_PROXY_KEY = 'attendly-github-proxy'
-const DEFAULT_PROXY_URL = 'https://r.jina.ai/http://'
-const proxyOptions = [
-  'https://r.jina.ai/http://',
-  'https://r.jina.ai/http://https://',
-  'https://api.allorigins.win/raw?url=',
-  'https://api.codetabs.com/v1/proxy?quest=',
-  'https://cors.isomorphic-git.org/',
-]
 const classNames = ['AI-101', 'BIO-202', 'CS-303', 'MATH-404', 'UX-505']
 
 const defaultStudents: Student[] = [
@@ -119,16 +110,23 @@ function App() {
   const [statusFilter, setStatusFilter] = useState<'all' | AttendanceStatus>('all')
   const [classFilter, setClassFilter] = useState<'all' | string>('all')
   const [githubPat, setGithubPat] = useState('')
-  const [proxyUrl, setProxyUrl] = useState(DEFAULT_PROXY_URL)
+  const [githubUser, setGithubUser] = useState<{
+    login: string
+    id: number
+    name?: string
+    html_url?: string
+    public_repos?: number
+    email?: string | null
+  } | null>(null)
   const [showPat, setShowPat] = useState(false)
   const [statusMessage, setStatusMessage] = useState('Static-only mode is active. No backend required.')
   const [isSyncing, setIsSyncing] = useState(false)
+  const [isVerifyingPat, setIsVerifyingPat] = useState(false)
   const [currentPage, setCurrentPage] = useState<PageId>('dashboard')
 
   useEffect(() => {
     const persistedAttendance = localStorage.getItem('attendly-attendance')
     const persistedPat = localStorage.getItem(GITHUB_PAT_KEY)
-    const persistedProxy = localStorage.getItem(GITHUB_PROXY_KEY)
 
     if (persistedAttendance) {
       setAttendance(JSON.parse(persistedAttendance))
@@ -137,10 +135,6 @@ function App() {
     if (persistedPat) {
       setGithubPat(persistedPat)
       setStatusMessage('GitHub PAT loaded from this browser.')
-    }
-
-    if (persistedProxy) {
-      setProxyUrl(persistedProxy)
     }
   }, [])
 
@@ -250,29 +244,24 @@ function App() {
 
     if (!nextValue.trim()) {
       localStorage.removeItem(GITHUB_PAT_KEY)
+      setGithubUser(null)
       return
     }
 
     localStorage.setItem(GITHUB_PAT_KEY, nextValue)
   }
 
-  const updateProxyUrl = (nextValue: string) => {
-    const cleaned = nextValue.trim() || DEFAULT_PROXY_URL
-    setProxyUrl(cleaned)
-    localStorage.setItem(GITHUB_PROXY_KEY, cleaned)
-  }
-
-  const tryGithubFallback = async () => {
+  const verifyGithubPat = async () => {
     if (!githubPat.trim()) {
-      setStatusMessage('Paste a GitHub PAT above before using the fallback browser-only proxy mode.')
+      setGithubUser(null)
+      setStatusMessage('Paste a GitHub PAT above before verifying it.')
       return
     }
 
-    const targetUrl = 'https://api.github.com/user'
-    const proxyTarget = `${proxyUrl.replace(/\/$/, '')}${targetUrl}`
+    setIsVerifyingPat(true)
 
     try {
-      const response = await fetch(proxyTarget, {
+      const response = await fetch('https://api.github.com/user', {
         headers: {
           Authorization: `Bearer ${githubPat}`,
           Accept: 'application/vnd.github+json',
@@ -281,16 +270,22 @@ function App() {
       })
 
       if (!response.ok) {
-        throw new Error(`GitHub fallback failed with ${response.status}.`)
+        throw new Error(`GitHub rejected this PAT with status ${response.status}.`)
       }
 
       const payload = await response.json()
-      setStatusMessage(`Fallback mode connected to GitHub as ${payload.login || 'user'}.`)
+      const login = payload.login || 'GitHub user'
+      const name = payload.name || login
+      const publicRepos = typeof payload.public_repos === 'number' ? payload.public_repos : 'unknown'
+
+      setGithubUser(payload)
+      setStatusMessage(`PAT verified. GitHub account: ${name} (${login}). ID: ${payload.id}. Public repos: ${publicRepos}.`)
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Fallback mode failed.'
-      setStatusMessage(
-        `Browser fallback failed: ${message}. This is only a last-resort static workaround and can be blocked by public proxy rate limits or CORS restrictions.`,
-      )
+      const message = error instanceof Error ? error.message : 'PAT verification failed.'
+      setGithubUser(null)
+      setStatusMessage(`PAT verification failed: ${message}`)
+    } finally {
+      setIsVerifyingPat(false)
     }
   }
 
@@ -537,30 +532,6 @@ function App() {
           </div>
 
           <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
-            <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-400">Fallback proxy URL</label>
-            <select
-              value={proxyUrl}
-              onChange={(event) => updateProxyUrl(event.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none"
-            >
-              {proxyOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-            <input
-              value={proxyUrl}
-              onChange={(event) => updateProxyUrl(event.target.value)}
-              placeholder="https://r.jina.ai/http://"
-              className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-            />
-            <p className="mt-2 text-xs text-slate-400">
-              Public proxies are not guaranteed, may rate-limit, and are not production-safe. This is only a last-resort static fallback.
-            </p>
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
             <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-400">Personal access token</label>
             <div className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2">
               <input
@@ -580,7 +551,7 @@ function App() {
               </button>
             </div>
             <p className="mt-3 text-xs text-slate-400">
-              Stored in localStorage on this browser only. No backend or serverless token exchange is used.
+              Stored locally in this browser only. This is a static-only fallback and no backend is used.
             </p>
           </div>
 
@@ -592,22 +563,45 @@ function App() {
             <p className="mt-2 text-slate-300">{statusMessage}</p>
           </div>
 
+          {githubUser && (
+            <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Verified account</p>
+              <div className="mt-3 space-y-2">
+                <p className="text-base font-medium text-white">{githubUser.name || githubUser.login}</p>
+                <p>Login: {githubUser.login}</p>
+                <p>GitHub ID: {githubUser.id}</p>
+                <p>Public repos: {githubUser.public_repos ?? 'unknown'}</p>
+                {githubUser.email && <p>Email: {githubUser.email}</p>}
+                {githubUser.html_url && (
+                  <a
+                    href={githubUser.html_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-block text-sky-300 underline underline-offset-4"
+                  >
+                    Open GitHub profile
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={tryGithubFallback}
-              className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-sky-500"
+              onClick={verifyGithubPat}
+              disabled={isVerifyingPat}
+              className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Try fallback GitHub
+              {isVerifyingPat ? 'Verifying...' : 'Verify PAT'}
             </button>
             <button
               type="button"
               onClick={() => {
                 setGithubPat('')
-                setProxyUrl(DEFAULT_PROXY_URL)
+                setGithubUser(null)
                 localStorage.removeItem(GITHUB_PAT_KEY)
-                localStorage.setItem(GITHUB_PROXY_KEY, DEFAULT_PROXY_URL)
-                setStatusMessage('GitHub PAT and fallback proxy were cleared from this browser.')
+                setStatusMessage('GitHub PAT was cleared from this browser.')
               }}
               className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-slate-500"
             >

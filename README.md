@@ -7,7 +7,7 @@ Attendly is a static-only attendance dashboard built with React, Vite, TypeScrip
 - React + Vite + TypeScript
 - Tailwind CSS
 - GitHub Pages deployment
-- GitHub OAuth device flow in the browser
+- PAT-based local GitHub verification in the browser
 - Hugging Face CSV sync via direct static file URLs
 - GitHub Actions automation for issue parsing and export workflows
 
@@ -24,13 +24,14 @@ npm run dev
 
 ## GitHub and Hugging Face setup
 
-This app does not require a local `.env` file. The browser login button uses the static GitHub OAuth client ID directly, and the repo-level automation uses GitHub repository secrets and variables.
+This app does not require a local `.env` file. The browser PAT flow is handled entirely on the client side, and the repo-level automation uses GitHub repository secrets and variables.
 
 Set these in GitHub:
 
-- `OAUTH_CLIENTID` = `Ov23liLcFMbThYi60P1E`
 - `HF_API` = your Hugging Face API token
 - `HF_REPO` = your Hugging Face dataset repo name
+
+No `OAUTH_CLIENTID` secret is required for this static-only setup.
 
 ## Deployment
 
