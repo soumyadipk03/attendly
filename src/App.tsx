@@ -109,6 +109,8 @@ function parseStudentsCsv(csvText: string): Student[] {
     })
 }
 
+type PageId = 'dashboard' | 'attendance' | 'overview' | 'students' | 'accounts'
+
 function App() {
   const [students, setStudents] = useState<Student[]>(defaultStudents)
   const [attendance, setAttendance] = useState<AttendanceState>(() => defaultAttendance)
@@ -121,6 +123,7 @@ function App() {
   const [showPat, setShowPat] = useState(false)
   const [statusMessage, setStatusMessage] = useState('Static-only mode is active. No backend required.')
   const [isSyncing, setIsSyncing] = useState(false)
+  const [currentPage, setCurrentPage] = useState<PageId>('dashboard')
 
   useEffect(() => {
     const persistedAttendance = localStorage.getItem('attendly-attendance')
@@ -315,6 +318,385 @@ function App() {
     }
   }
 
+  const navItems = [
+    { id: 'dashboard', label: 'Dashboard' },
+    { id: 'attendance', label: 'Take Attendance' },
+    { id: 'overview', label: 'Attendance View' },
+    { id: 'students', label: 'All Students' },
+    { id: 'accounts', label: 'Accounts' },
+  ] as const
+
+  const renderPage = () => {
+    if (currentPage === 'attendance') {
+      return (
+        <main className="mt-6 space-y-6 rounded-[24px] border border-slate-800 bg-slate-900/80 p-5 shadow-glow">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Attendance</p>
+              <h2 className="mt-2 text-2xl font-semibold text-white">Take attendance</h2>
+            </div>
+            <label className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300">
+              <CalendarDays className="h-4 w-4 text-sky-300" />
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(event) => setSelectedDate(event.target.value)}
+                className="bg-transparent text-slate-100 outline-none"
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            {(['all', ...classNames] as const).map((className) => (
+              <button
+                key={className}
+                type="button"
+                onClick={() => setClassFilter(className)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                  classFilter === className
+                    ? 'border-sky-500 bg-sky-500/10 text-sky-200'
+                    : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500'
+                }`}
+              >
+                {className === 'all' ? 'All classes' : className}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            {(['all', 'present', 'late', 'absent', 'excused'] as const).map((filter) => (
+              <button
+                key={filter}
+                type="button"
+                onClick={() => setStatusFilter(filter)}
+                className={`rounded-full px-3 py-1.5 text-xs font-medium capitalize transition ${
+                  statusFilter === filter
+                    ? 'bg-sky-500 text-slate-950'
+                    : 'border border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500'
+                }`}
+              >
+                {filter === 'all' ? 'All' : filter}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {filteredStudents.map((student) => {
+              const currentStatus = attendance[student.id] ?? 'absent'
+
+              return (
+                <div key={student.id} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-white">{student.name}</p>
+                      <p className="text-sm text-slate-400">{student.batch}</p>
+                    </div>
+                    <span className={`rounded-full px-2 py-1 text-[10px] font-medium capitalize ${statusStyles[currentStatus].badge}`}>
+                      {statusStyles[currentStatus].label}
+                    </span>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    {statusOrder.map((status) => (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => updateAttendance(student.id, status)}
+                        className={`rounded-xl px-2 py-2 text-xs font-medium capitalize transition ${
+                          currentStatus === status
+                            ? statusStyles[status].badge
+                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                        }`}
+                      >
+                        {statusStyles[status].label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </main>
+      )
+    }
+
+    if (currentPage === 'overview') {
+      return (
+        <main className="mt-6 rounded-[24px] border border-slate-800 bg-slate-900/80 p-5 shadow-glow">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Overview</p>
+              <h2 className="mt-2 text-2xl font-semibold text-white">Attendance summary</h2>
+            </div>
+            <button
+              type="button"
+              onClick={exportCsv}
+              className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-3 py-2 text-sm font-medium text-slate-950 transition hover:bg-sky-400"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </button>
+          </div>
+
+          <div className="mt-6 grid gap-4 md:grid-cols-4">
+            {[
+              { label: 'Students', value: `${students.length}`, icon: Users },
+              { label: 'Present', value: `${presentCount}`, icon: CheckCircle2 },
+              { label: 'Late', value: `${lateCount}`, icon: Clock3 },
+              { label: 'Rate', value: `${attendanceRate}%`, icon: BarChart3 },
+            ].map(({ label, value, icon: Icon }) => (
+              <div key={label} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-slate-400">{label}</p>
+                  <Icon className="h-4 w-4 text-sky-300" />
+                </div>
+                <p className="mt-4 text-3xl font-bold text-white">{value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            {classSummary.map(({ className, count }) => (
+              <div key={className} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-400">{className}</p>
+                <p className="mt-2 text-2xl font-bold text-white">{count}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-6 space-y-3">
+            {issueSummary.map((issue) => (
+              <div key={issue.title} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium text-white">{issue.title}</p>
+                  <span className="rounded-full bg-sky-500/10 px-2 py-1 text-xs text-sky-200">{issue.count}</span>
+                </div>
+                <p className="mt-2 text-xs text-slate-400">{issue.detail}</p>
+              </div>
+            ))}
+          </div>
+        </main>
+      )
+    }
+
+    if (currentPage === 'students') {
+      return (
+        <main className="mt-6 rounded-[24px] border border-slate-800 bg-slate-900/80 p-5 shadow-glow">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Roster</p>
+              <h2 className="mt-2 text-2xl font-semibold text-white">All students</h2>
+            </div>
+            <div className="relative w-full max-w-md">
+              <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search students, batch, or email"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-slate-100 outline-none ring-0 placeholder:text-slate-500"
+              />
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {students
+              .filter((student) => {
+                const haystack = `${student.name} ${student.email} ${student.batch}`.toLowerCase()
+                return haystack.includes(query.toLowerCase())
+              })
+              .map((student) => (
+                <div key={student.id} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-white">{student.name}</p>
+                      <p className="text-xs text-slate-400">{student.id}</p>
+                    </div>
+                    <span className="rounded-full bg-sky-500/10 px-2 py-1 text-[10px] font-medium text-sky-200">
+                      {student.batch}
+                    </span>
+                  </div>
+                  <p className="mt-3 text-sm text-slate-300">{student.email}</p>
+                  <p className="mt-2 text-xs uppercase tracking-[0.16em] text-slate-400">
+                    {attendance[student.id] ?? 'absent'}
+                  </p>
+                </div>
+              ))}
+          </div>
+        </main>
+      )
+    }
+
+    if (currentPage === 'accounts') {
+      return (
+        <main className="mt-6 rounded-[24px] border border-slate-800 bg-slate-900/80 p-5 shadow-glow">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Accounts</p>
+              <h2 className="mt-2 text-2xl font-semibold text-white">GitHub access</h2>
+            </div>
+            <GitBranch className="h-5 w-5 text-sky-300" />
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
+            <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-400">Fallback proxy URL</label>
+            <select
+              value={proxyUrl}
+              onChange={(event) => updateProxyUrl(event.target.value)}
+              className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none"
+            >
+              {proxyOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+            <input
+              value={proxyUrl}
+              onChange={(event) => updateProxyUrl(event.target.value)}
+              placeholder="https://r.jina.ai/http://"
+              className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+            />
+            <p className="mt-2 text-xs text-slate-400">
+              Public proxies are not guaranteed, may rate-limit, and are not production-safe. This is only a last-resort static fallback.
+            </p>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
+            <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-400">Personal access token</label>
+            <div className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2">
+              <input
+                type={showPat ? 'text' : 'password'}
+                value={githubPat}
+                onChange={(event) => updateGithubPat(event.target.value)}
+                placeholder="ghp_xxxxxxxxxxxxx"
+                className="w-full bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPat((current) => !current)}
+                className="text-slate-300 transition hover:text-sky-200"
+                aria-label={showPat ? 'Hide PAT' : 'Show PAT'}
+              >
+                {showPat ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+            <p className="mt-3 text-xs text-slate-400">
+              Stored in localStorage on this browser only. No backend or serverless token exchange is used.
+            </p>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-medium text-white">Status</p>
+              <XCircle className="h-4 w-4 text-sky-300" />
+            </div>
+            <p className="mt-2 text-slate-300">{statusMessage}</p>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={tryGithubFallback}
+              className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-sky-500"
+            >
+              Try fallback GitHub
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setGithubPat('')
+                setProxyUrl(DEFAULT_PROXY_URL)
+                localStorage.removeItem(GITHUB_PAT_KEY)
+                localStorage.setItem(GITHUB_PROXY_KEY, DEFAULT_PROXY_URL)
+                setStatusMessage('GitHub PAT and fallback proxy were cleared from this browser.')
+              }}
+              className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-slate-500"
+            >
+              Clear PAT
+            </button>
+          </div>
+        </main>
+      )
+    }
+
+    return (
+      <main className="mt-6 space-y-6 rounded-[24px] border border-slate-800 bg-slate-900/80 p-5 shadow-glow">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Dashboard</p>
+            <h2 className="mt-2 text-2xl font-semibold text-white">Attendance board</h2>
+          </div>
+          <button
+            type="button"
+            onClick={exportCsv}
+            className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-3 py-2 text-sm font-medium text-slate-950 transition hover:bg-sky-400"
+          >
+            <Download className="h-4 w-4" />
+            Export CSV
+          </button>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-4">
+          {[
+            { label: 'Students', value: `${students.length}`, icon: Users },
+            { label: 'Present', value: `${presentCount}`, icon: CheckCircle2 },
+            { label: 'Late', value: `${lateCount}`, icon: Clock3 },
+            { label: 'Rate', value: `${attendanceRate}%`, icon: BarChart3 },
+          ].map(({ label, value, icon: Icon }) => (
+            <div key={label} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-400">{label}</p>
+                <Icon className="h-4 w-4 text-sky-300" />
+              </div>
+              <p className="mt-4 text-3xl font-bold text-white">{value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+            <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Issue parser</p>
+            <div className="mt-4 space-y-3">
+              {issueSummary.map((issue) => (
+                <div key={issue.title} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium text-white">{issue.title}</p>
+                    <span className="rounded-full bg-sky-500/10 px-2 py-1 text-xs text-sky-200">{issue.count}</span>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-400">{issue.detail}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Status</p>
+              <ShieldCheck className="h-5 w-5 text-sky-300" />
+            </div>
+            <p className="mt-4 text-base text-slate-200">{statusMessage}</p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPage('attendance')}
+                className="rounded-xl bg-sky-500 px-3 py-2 text-sm font-medium text-slate-950 transition hover:bg-sky-400"
+              >
+                Start attendance
+              </button>
+              <button
+                type="button"
+                onClick={syncToHuggingFace}
+                disabled={isSyncing}
+                className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSyncing ? 'Refreshing...' : 'Refresh roster'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </main>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50">
       <div className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-8">
@@ -336,295 +718,25 @@ function App() {
             </div>
           </div>
 
-          <div className="mt-6 grid gap-4 md:grid-cols-4">
-            {[
-              { label: 'Students', value: `${students.length}`, icon: Users },
-              { label: 'Present', value: `${presentCount}`, icon: CheckCircle2 },
-              { label: 'Late', value: `${lateCount}`, icon: Clock3 },
-              { label: 'Rate', value: `${attendanceRate}%`, icon: BarChart3 },
-            ].map(({ label, value, icon: Icon }) => (
-              <div key={label} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-slate-400">{label}</p>
-                  <Icon className="h-4 w-4 text-sky-300" />
-                </div>
-                <p className="mt-4 text-3xl font-bold text-white">{value}</p>
-              </div>
+          <nav className="mt-6 flex flex-wrap gap-2">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setCurrentPage(item.id)}
+                className={`rounded-full px-3 py-2 text-sm font-medium transition ${
+                  currentPage === item.id
+                    ? 'bg-sky-500 text-slate-950'
+                    : 'border border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500'
+                }`}
+              >
+                {item.label}
+              </button>
             ))}
-          </div>
+          </nav>
         </header>
 
-        <main className="mt-6 grid gap-6 xl:grid-cols-[1.65fr_0.95fr]">
-          <section className="rounded-[24px] border border-slate-800 bg-slate-900/80 p-5 shadow-glow">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Daily roster</p>
-                <h2 className="mt-2 text-2xl font-semibold text-white">Attendance board</h2>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <label className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-300">
-                  <CalendarDays className="h-4 w-4 text-sky-300" />
-                  <input
-                    type="date"
-                    value={selectedDate}
-                    onChange={(event) => setSelectedDate(event.target.value)}
-                    className="bg-transparent text-slate-100 outline-none"
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={exportCsv}
-                  className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-3 py-2 text-sm font-medium text-slate-950 transition hover:bg-sky-400"
-                >
-                  <Download className="h-4 w-4" />
-                  Export CSV
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="relative w-full max-w-md">
-                <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search students, batch, or email"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-slate-100 outline-none ring-0 placeholder:text-slate-500"
-                />
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                {(['all', 'present', 'late', 'absent', 'excused'] as const).map((filter) => (
-                  <button
-                    key={filter}
-                    type="button"
-                    onClick={() => setStatusFilter(filter)}
-                    className={`rounded-full px-3 py-1.5 text-xs font-medium capitalize transition ${
-                      statusFilter === filter
-                        ? 'bg-sky-500 text-slate-950'
-                        : 'border border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500'
-                    }`}
-                  >
-                    {filter === 'all' ? 'All' : filter}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              {(['all', ...classNames] as const).map((className) => (
-                <button
-                  key={className}
-                  type="button"
-                  onClick={() => setClassFilter(className)}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
-                    classFilter === className
-                      ? 'border-sky-500 bg-sky-500/10 text-sky-200'
-                      : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500'
-                  }`}
-                >
-                  {className === 'all' ? 'All classes' : className}
-                </button>
-              ))}
-            </div>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-              {classSummary.map(({ className, count }) => (
-                <div key={className} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
-                  <p className="text-xs uppercase tracking-[0.16em] text-slate-400">{className}</p>
-                  <p className="mt-2 text-2xl font-bold text-white">{count}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-5 overflow-hidden rounded-2xl border border-slate-800">
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-left">
-                  <thead className="bg-slate-950/70 text-xs uppercase tracking-[0.15em] text-slate-400">
-                    <tr>
-                      <th className="px-4 py-3 font-medium">Student</th>
-                      <th className="px-4 py-3 font-medium">Batch</th>
-                      <th className="px-4 py-3 font-medium">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredStudents.map((student) => {
-                      const currentStatus = attendance[student.id] ?? 'absent'
-
-                      return (
-                        <tr key={student.id} className="border-t border-slate-800 bg-slate-900/30">
-                          <td className="px-4 py-4">
-                            <div>
-                              <p className="font-medium text-white">{student.name}</p>
-                              <p className="text-sm text-slate-400">{student.email}</p>
-                            </div>
-                          </td>
-                          <td className="px-4 py-4 text-sm text-slate-300">{student.batch}</td>
-                          <td className="px-4 py-4">
-                            <div className="flex flex-wrap gap-2">
-                              {statusOrder.map((status) => (
-                                <button
-                                  key={status}
-                                  type="button"
-                                  onClick={() => updateAttendance(student.id, status)}
-                                  className={`rounded-full px-2.5 py-1 text-[11px] font-medium capitalize transition ${
-                                    currentStatus === status
-                                      ? statusStyles[status].badge
-                                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                                  }`}
-                                >
-                                  {statusStyles[status].label}
-                                </button>
-                              ))}
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </section>
-
-          <aside className="space-y-6">
-            <div className="rounded-[24px] border border-slate-800 bg-slate-900/80 p-5 shadow-glow">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Signals</p>
-                  <h3 className="mt-2 text-xl font-semibold text-white">Issue parser</h3>
-                </div>
-                <ShieldCheck className="h-5 w-5 text-sky-300" />
-              </div>
-
-              <div className="mt-5 space-y-3">
-                {issueSummary.map((issue) => (
-                  <div key={issue.title} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-medium text-white">{issue.title}</p>
-                      <span className="rounded-full bg-sky-500/10 px-2 py-1 text-xs text-sky-200">{issue.count}</span>
-                    </div>
-                    <p className="mt-2 text-xs text-slate-400">{issue.detail}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-[24px] border border-slate-800 bg-slate-900/80 p-5 shadow-glow">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Access</p>
-                  <h3 className="mt-2 text-xl font-semibold text-white">GitHub PAT</h3>
-                </div>
-                <GitBranch className="h-5 w-5 text-sky-300" />
-              </div>
-
-              <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
-                <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-400">Fallback proxy URL</label>
-                <select
-                  value={proxyUrl}
-                  onChange={(event) => updateProxyUrl(event.target.value)}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none"
-                >
-                  {proxyOptions.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-
-                <input
-                  value={proxyUrl}
-                  onChange={(event) => updateProxyUrl(event.target.value)}
-                  placeholder="https://r.jina.ai/http://"
-                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                />
-
-                <p className="mt-2 text-xs text-slate-400">
-                  Public proxies are not guaranteed, may rate-limit, and are not production-safe. This is only a last-resort static fallback.
-                </p>
-              </div>
-
-              <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
-                <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-400">Personal access token</label>
-                <div className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2">
-                  <input
-                    type={showPat ? 'text' : 'password'}
-                    value={githubPat}
-                    onChange={(event) => updateGithubPat(event.target.value)}
-                    placeholder="ghp_xxxxxxxxxxxxx"
-                    className="w-full bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPat((current) => !current)}
-                    className="text-slate-300 transition hover:text-sky-200"
-                    aria-label={showPat ? 'Hide PAT' : 'Show PAT'}
-                  >
-                    {showPat ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-
-                <p className="mt-3 text-xs text-slate-400">
-                  Stored in localStorage on this browser only. No backend or serverless token exchange is used.
-                </p>
-              </div>
-
-              <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
-                <p className="font-medium text-white">Status</p>
-                <p className="mt-2 text-slate-300">{statusMessage}</p>
-              </div>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={tryGithubFallback}
-                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-sky-500"
-                >
-                  Try fallback GitHub
-                </button>
-                <button
-                  type="button"
-                  onClick={syncToHuggingFace}
-                  disabled={isSyncing}
-                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isSyncing ? 'Refreshing...' : 'Refresh roster'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setGithubPat('')
-                    setProxyUrl(DEFAULT_PROXY_URL)
-                    localStorage.removeItem(GITHUB_PAT_KEY)
-                    localStorage.setItem(GITHUB_PROXY_KEY, DEFAULT_PROXY_URL)
-                    setStatusMessage('GitHub PAT and fallback proxy were cleared from this browser.')
-                  }}
-                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-slate-500"
-                >
-                  Clear PAT
-                </button>
-              </div>
-            </div>
-
-            <div className="rounded-[24px] border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-sky-950/40 p-5 shadow-glow">
-              <div className="flex items-center gap-3">
-                <div className="rounded-xl bg-sky-500/10 p-2 text-sky-200">
-                  <XCircle className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Policy</p>
-                  <p className="mt-1 font-medium text-white">Zero backend by design</p>
-                </div>
-              </div>
-
-              <p className="mt-4 text-sm leading-6 text-slate-300">
-                This site is intentionally static. The roster is retrieved as CSV, attendance is stored in browser storage, and your GitHub PAT stays in localStorage on this browser only.
-              </p>
-            </div>
-          </aside>
-        </main>
+        {renderPage()}
       </div>
     </div>
   )
