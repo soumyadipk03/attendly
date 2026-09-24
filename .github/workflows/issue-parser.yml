@@ -1,0 +1,34 @@
+name: Parse GitHub issues into attendance metadata
+
+on:
+  issues:
+    types: [opened, edited, labeled, reopened]
+  workflow_dispatch:
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      HF_API: ${{ secrets.HF_API }}
+      HF_REPO: ${{ vars.HF_REPO }}
+      HF_API_URL: ${{ vars.HF_API_URL || 'https://huggingface.co/api' }}
+      VITE_GITHUB_CLIENT_ID: ${{ secrets.OAUTH_CLIENTID || 'Ov23liLcFMbThYi60P1E' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Parse issue data
+        run: node scripts/parse-issues.mjs
+
+      - name: Upload issue report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-report
+          path: issue-report.csv

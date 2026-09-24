@@ -1,0 +1,46 @@
+name: Ensure Hugging Face dataset repo exists
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  setup-hf:
+    runs-on: ubuntu-latest
+    env:
+      HF_API: ${{ secrets.HF_API }}
+      HF_ORG: ${{ vars.HF_ORG }}
+      HF_REPO: ${{ vars.HF_REPO }}
+      HF_REPO_TYPE: dataset
+      HF_API_URL: ${{ vars.HF_API_URL || 'https://huggingface.co/api' }}
+    steps:
+      - name: Create or verify dataset repo
+        shell: bash
+        run: |
+          set -e
+
+          if [ -z "$HF_API" ]; then
+            echo "HF_API is required as a GitHub secret."
+            exit 1
+          fi
+
+          if [ -z "$HF_REPO" ]; then
+            echo "HF_REPO is required as a GitHub variable."
+            exit 1
+          fi
+
+          payload="{\"name\":\"$HF_REPO\",\"private\":false,\"repo_type\":\"$HF_REPO_TYPE\"}"
+
+          if [ -n "$HF_ORG" ]; then
+            payload="{\"name\":\"$HF_REPO\",\"organization\":\"$HF_ORG\",\"private\":false,\"repo_type\":\"$HF_REPO_TYPE\"}"
+          fi
+
+          echo "Ensuring dataset repo exists: ${HF_ORG:-$HF_REPO} / $HF_REPO"
+
+          curl -fsSL -X POST "$HF_API_URL/repos/create" \
+            -H "Authorization: Bearer $HF_API" \
+            -H "Content-Type: application/json" \
+            -d "$payload" || echo "Repo already exists or creation was skipped."
+
+          echo "HF dataset repo is ready for static CSV sync."

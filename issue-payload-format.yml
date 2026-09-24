@@ -1,0 +1,9 @@
+# Attendly issue payload format for GitHub Actions parsing
+# Put this in the issue body when creating attendance issues.
+
+student_id: stu-101
+student_name: Aarav Sharma
+class_name: AI-101
+status: present
+attendance_date: 2026-09-24
+notes: On time and checked in before class start

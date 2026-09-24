@@ -1,0 +1,26 @@
+id,name,email,batch
+stu-101,Aarav Sharma,aarav.sharma@school.edu,AI-101
+stu-102,Meera Patel,meera.patel@school.edu,AI-101
+stu-103,Leo Nguyen,leo.nguyen@school.edu,AI-101
+stu-104,Noah Brooks,noah.brooks@school.edu,AI-101
+stu-105,Riya Verma,riya.verma@school.edu,AI-101
+stu-201,Emma Johnson,emma.johnson@school.edu,BIO-202
+stu-202,Sophia Williams,sophia.williams@school.edu,BIO-202
+stu-203,Daniel Kim,daniel.kim@school.edu,BIO-202
+stu-204,Olivia Martinez,olivia.martinez@school.edu,BIO-202
+stu-205,Henry Lee,henry.lee@school.edu,BIO-202
+stu-301,Aiden Clark,aiden.clark@school.edu,CS-303
+stu-302,Mila Davis,mila.davis@school.edu,CS-303
+stu-303,Zoe Wilson,zoe.wilson@school.edu,CS-303
+stu-304,Jack Moore,jack.moore@school.edu,CS-303
+stu-305,Priya Shah,priya.shah@school.edu,CS-303
+stu-401,Ben Carter,ben.carter@school.edu,MATH-404
+stu-402,Liam Harris,liam.harris@school.edu,MATH-404
+stu-403,Nora Allen,nora.allen@school.edu,MATH-404
+stu-404,Sofia Brown,sofia.brown@school.edu,MATH-404
+stu-405,Lucas Evans,lucas.evans@school.edu,MATH-404
+stu-501,Harper King,harper.king@school.edu,UX-505
+stu-502,Ethan Walker,ethan.walker@school.edu,UX-505
+stu-503,Amelia Hall,amelia.hall@school.edu,UX-505
+stu-504,Mason Young,mason.young@school.edu,UX-505
+stu-505,Ella Scott,ella.scott@school.edu,UX-505
