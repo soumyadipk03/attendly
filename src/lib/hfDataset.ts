@@ -21,6 +21,8 @@ export type HfRepo = { type: 'dataset'; name: string }
 
 export const DEFAULT_REPO_NAME = 'attendly-data'
 
+export { createRepo, deleteRepo }
+
 export function repoIdFor(username: string, repoName: string): string {
   return `${username}/${repoName.trim() || DEFAULT_REPO_NAME}`
 }

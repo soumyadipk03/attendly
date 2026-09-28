@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   DEFAULT_REPO_NAME,
+  createRepo,
+  deleteRepo,
   destroyRepo,
   ensureRepo,
   loadDataset,
@@ -51,18 +53,58 @@ function readStored(key: string): string {
   return window.localStorage.getItem(key) ?? ''
 }
 
+const VERIFIED_CACHE_KEY = 'attendly-verified-cache'
+
+interface VerifiedCache {
+  token: string
+  account: HfAccount
+  verified: boolean
+}
+
+function getVerifiedCache(): VerifiedCache | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  try {
+    const raw = window.localStorage.getItem(VERIFIED_CACHE_KEY)
+    if (!raw) {
+      return null
+    }
+    const parsed = JSON.parse(raw)
+    if (parsed?.token && parsed?.account && parsed.verified === true) {
+      return parsed as VerifiedCache
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function setVerifiedCache(cache: VerifiedCache): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.localStorage.setItem(VERIFIED_CACHE_KEY, JSON.stringify(cache))
+}
+
+function clearVerifiedCache(): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.localStorage.removeItem(VERIFIED_CACHE_KEY)
+}
+
 const EMPTY_SNAPSHOT: DatasetSnapshot = {}
 
 export function useDataset() {
+  // Token is read from localStorage but the app stays locked until verified.
+  // isVerified is the ONLY gate - nothing renders until this is true.
   const [token, setTokenState] = useState(() => readStored(STORAGE_KEYS.token))
   const [repoName, setRepoNameState] = useState(() => readStored(STORAGE_KEYS.repo) || DEFAULT_REPO_NAME)
   const [account, setAccount] = useState<HfAccount | null>(null)
+  const [isVerified, setIsVerified] = useState(false)
   const [snapshot, setSnapshot] = useState<DatasetSnapshot>(EMPTY_SNAPSHOT)
-  const [status, setStatus] = useState(() =>
-    token.trim()
-      ? 'Loading the dataset from Hugging Face...'
-      : 'No Hugging Face token saved yet, so there is nothing to load. Add one and the dataset loads on its own, or use Reset dataset to seed the sample classes.',
-  )
+  const [status, setStatus] = useState('Enter your Hugging Face API token to continue.')
   const [isVerifying, setIsVerifying] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isSeeding, setIsSeeding] = useState(false)
@@ -160,6 +202,8 @@ export function useDataset() {
   const clearToken = useCallback(() => {
     setTokenState('')
     setAccount(null)
+    setIsVerified(false)
+    clearVerifiedCache()
     window.localStorage.removeItem(STORAGE_KEYS.token)
     setStatus('Hugging Face token cleared from this browser. Cached dataset data was dropped too.')
     setSnapshot(EMPTY_SNAPSHOT)
@@ -211,51 +255,97 @@ export function useDataset() {
   const verifyToken = useCallback(async () => {
     if (!token.trim()) {
       setAccount(null)
+      setIsVerified(false)
+      clearVerifiedCache()
       const message = 'Paste a Hugging Face API token before verifying it.'
       setStatus(message)
       setModal({ type: 'success', title: 'No token to verify', message, confirmText: 'Dismiss' })
       return
     }
 
+    // Skip re-verification if token hasn't changed and we already verified it this session.
+    const cached = getVerifiedCache()
+    if (cached?.token === token && cached.verified) {
+      const resolved = cached.account
+      setAccount(resolved)
+      setIsVerified(true)
+      setStatus(`Restored verified session for ${resolved.name}. Loading dataset...`)
+      void pullDataset()
+      return
+    }
+
     setIsVerifying(true)
     try {
       const resolved = await resolveAccount(token)
+
+      // Check write access by creating and deleting a temporary test repo.
+      // This avoids any commits to the main attendly-data repo.
+      const testRepoName = `attendly-verify-${Date.now()}`
+      const testRepo = { type: 'dataset' as const, name: `${resolved.name}/${testRepoName}` }
+
+      await createRepo({ repo: testRepo, accessToken: token, visibility: 'private' })
+      await deleteRepo({ repo: testRepo, accessToken: token })
+
+      // Write succeeded -> token has write access. Cache it.
+      setVerifiedCache({ token, account: resolved, verified: true })
       setAccount(resolved)
-      setStatus(`Token verified for ${resolved.name}. Loading ${repoFor(resolved.name, repoName).name}...`)
-      // Verifying is the natural moment to pull the data, since the app auto-loads
-      // on open only when a token is already stored. pullDataset reports the result.
+      setIsVerified(true)
+      setStatus(`Verified write access for ${resolved.name}. Loading dataset...`)
       void pullDataset()
     } catch (error) {
-      setAccount(null)
-      const message = `Token verification failed: ${error instanceof Error ? error.message : String(error)}`
-      setStatus(message)
-      setModal({ type: 'success', title: 'Verification failed', message, confirmText: 'Dismiss' })
+      // If repo creation/deletion fails, fall back to read-only mode
+      // (token may have read access but not write)
+      try {
+        const resolved = await resolveAccount(token)
+        setAccount(resolved)
+        setIsVerified(true)
+        clearVerifiedCache() // don't cache read-only
+        setStatus(`Read-only access for ${resolved.name}. Loading dataset...`)
+        void pullDataset()
+      } catch {
+        setAccount(null)
+        setIsVerified(false)
+        clearVerifiedCache()
+        const message = `Verification failed: ${error instanceof Error ? error.message : String(error)}`
+        setStatus(message)
+        setModal({ type: 'success', title: 'Verification failed', message, confirmText: 'Dismiss' })
+      }
     } finally {
       setIsVerifying(false)
     }
-  }, [pullDataset, repoName, token])
+  }, [repoName, token])
 
   const autoLoadedRef = useRef(false)
+  const verifiedRestoredRef = useRef(false)
 
-  // The dataset loads by itself as soon as the app opens, so nobody has to hunt
-  // for a Load button. Runs once; a stale token just reports in the status line
-  // instead of interrupting with a modal.
+  // Restore verified state from cache on mount. This runs once.
+  useEffect(() => {
+    if (verifiedRestoredRef.current) {
+      return
+    }
+    verifiedRestoredRef.current = true
+    const cached = getVerifiedCache()
+    if (cached?.token === token && cached.verified) {
+      const resolved = cached.account
+      setAccount(resolved)
+      setIsVerified(true)
+      setStatus(`Restored verified session for ${resolved.name}. Loading dataset...`)
+      void pullDataset()
+    }
+  }, [token, pullDataset])
+
+  // The dataset loads ONLY after write access is verified. Runs once.
   useEffect(() => {
     if (autoLoadedRef.current) {
       return
     }
-    autoLoadedRef.current = true
-
-    if (!token.trim()) {
+    if (!isVerified) {
       return
     }
-
-    // Synchronizing with an external system (the Hugging Face API) on mount is
-    // exactly what effects are for. pullDataset flips isLoading before it awaits,
-    // which is what the progress modal is driven from.
+    autoLoadedRef.current = true
     // oxlint-disable-next-line react/set-state-in-effect
     void pullDataset()
-  }, [pullDataset, token])
+  }, [pullDataset, isVerified])
 
   const seedDataset = useCallback(async () => {
     setIsSeeding(true)
