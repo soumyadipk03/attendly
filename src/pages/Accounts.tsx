@@ -1,4 +1,4 @@
-import { Database, Eye, EyeOff, KeyRound, ShieldCheck, Sprout, Trash2 } from 'lucide-react'
+import { Combine, Database, Eye, EyeOff, KeyRound, ShieldCheck, Sprout, Trash2 } from 'lucide-react'
 import { GhostButton, PageHeading, Panel, StatCard } from '../components/ui'
 import type { DatasetController } from '../hooks/useDataset'
 import { repoIdFor } from '../lib/hfDataset'
@@ -17,6 +17,10 @@ export function Accounts({ app }: { app: DatasetController }) {
     snapshot,
     isVerifying,
     isSeeding,
+    isSquashing,
+    isWriting,
+    squashCandidates,
+    confirmSquash,
     verifyToken,
     seedDataset,
   } = app
@@ -88,6 +92,13 @@ export function Accounts({ app }: { app: DatasetController }) {
           {isVerifying ? 'Verifying...' : 'Verify HF token'}
         </GhostButton>
 
+        {squashCandidates.length > 0 ? (
+          <GhostButton onClick={confirmSquash} disabled={isSquashing || isWriting}>
+            <Combine className="h-4 w-4" />
+            {isSquashing ? 'Squashing...' : `Squash ${squashCandidates.length} finished month(s)`}
+          </GhostButton>
+        ) : null}
+
         <button
           type="button"
           onClick={confirmSeed}
@@ -105,10 +116,11 @@ export function Accounts({ app }: { app: DatasetController }) {
       </div>
 
       <p className="mt-3 text-xs text-slate-500">
-        The dataset loads by itself when Attendly opens, so there is no Load button. Reset dataset writes{' '}
-        <span className="font-mono">data/students/class/&lt;class&gt;/students.csv</span> and{' '}
-        <span className="font-mono">data/attendance/class/&lt;class&gt;/ddmmyy_tttttt_attendance.csv</span> for the
-        sample classes {MOCK_CLASS_NAMES.join(' and ')}.
+        The dataset loads by itself when Attendly opens, so there is no Load button. Attendance lives one month deep, at{' '}
+        <span className="font-mono">data/attendance/class/&lt;class&gt;/&lt;YYYY-MM&gt;/ddmmyy_tttttt_attendance.csv</span>.
+        When a class has two month folders, the older one is offered for squashing into a single{' '}
+        <span className="font-mono">&lt;YYYY-MM&gt;.csv</span> of classes attended over classes held. Reset dataset
+        writes the sample classes {MOCK_CLASS_NAMES.join(' and ')}.
       </p>
 
       {account ? (

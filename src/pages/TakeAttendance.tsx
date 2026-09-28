@@ -97,7 +97,7 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 shadow-sm">
             <span className="font-mono text-[11px] text-slate-500">
-              {attendancePath(activeClassName, fileName)}
+              {attendancePath(activeClassName, sessionDate.slice(0, 7), fileName)}
               {slotRange ? ` · slot "${slotRange}"` : ''}
             </span>
             <div className="flex gap-2">

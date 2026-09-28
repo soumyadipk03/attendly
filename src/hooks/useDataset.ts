@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   DEFAULT_REPO_NAME,
+  deleteFilesIn,
   destroyRepo,
   ensureRepo,
   loadDataset,
+  readSquashedMonth,
   repoFor,
   resolveAccount,
   uploadFiles,
@@ -15,11 +17,13 @@ import {
   formatSlotRange,
   isSlotRangeValid,
   sortByName,
+  squashedAttendancePath,
   toIsoDate,
 } from '../lib/datasetLayout'
 import { buildMockSeedFiles } from '../lib/mockSeed'
 import { toAttendanceCsv } from '../lib/records'
 import { buildReport, emptyReport, listMonths } from '../lib/report'
+import { buildSquashedCsv, describeCandidates, findSquashCandidates, summariseSessions } from '../lib/squash'
 import type {
   AttendanceDraft,
   AttendanceStatus,
@@ -29,6 +33,7 @@ import type {
   ModalState,
   RangeMode,
   Student,
+  SquashCandidate,
 } from '../lib/types'
 
 const STORAGE_KEYS = {
@@ -38,6 +43,9 @@ const STORAGE_KEYS = {
   rangeMode: 'attendly-range-mode',
   rangeMonth: 'attendly-range-month',
 } as const
+
+const CLOSE_WARNING =
+  'Do not close this tab or refresh the page. An unfinished write can be fatal and leave the dataset half updated.'
 
 function readStored(key: string): string {
   if (typeof window === 'undefined') {
@@ -62,7 +70,23 @@ export function useDataset() {
   const [isLoading, setIsLoading] = useState(false)
   const [isSeeding, setIsSeeding] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSquashing, setIsSquashing] = useState(false)
   const [modal, setModal] = useState<ModalState>(null)
+
+  // Any Hugging Face write in flight. Used to warn before the tab is closed.
+  const isWriting = isSeeding || isSubmitting || isSquashing
+
+  useEffect(() => {
+    if (!isWriting) {
+      return
+    }
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnBeforeLeaving)
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving)
+  }, [isWriting])
 
   const [selectedClassName, setSelectedClassName] = useState(() => readStored(STORAGE_KEYS.className))
   const [rangeMode, setRangeModeState] = useState<RangeMode>(() =>
@@ -94,7 +118,7 @@ export function useDataset() {
     window.localStorage.setItem(STORAGE_KEYS.rangeMode, rangeMode)
   }, [rangeMode])
 
-  const months = useMemo(() => (activeClass ? listMonths(activeClass.sessions) : []), [activeClass])
+  const months = useMemo(() => (activeClass ? listMonths(activeClass) : []), [activeClass])
   const activeMonth = months.includes(rangeMonth) ? rangeMonth : (months[0] ?? '')
 
   useEffect(() => {
@@ -242,6 +266,7 @@ export function useDataset() {
       title: 'Seeding dataset',
       message: 'Recreating the dataset repo and writing the class folders. Do not close this tab.',
       progress: 0,
+      warning: CLOSE_WARNING,
     })
 
     try {
@@ -315,12 +340,15 @@ export function useDataset() {
     // The filename records the slot start; the full "from to" range is kept in
     // the file's own slot column.
     const fileName = buildAttendanceFileName(sessionDate, slotStart)
+    const month = sessionDate.slice(0, 7)
+    const targetPath = attendancePath(activeClassName, month, fileName)
 
     setModal({
       type: 'progress',
       title: 'Uploading attendance',
-      message: `Writing ${fileName} to data/attendance/class/${activeClassName}/`,
+      message: `Writing ${fileName} to data/attendance/class/${activeClassName}/${month}/. Do not close this tab.`,
       progress: 10,
+      warning: CLOSE_WARNING,
     })
 
     try {
@@ -346,7 +374,7 @@ export function useDataset() {
         token,
         [
           {
-            path: attendancePath(activeClassName, fileName),
+            path: targetPath,
             content: new Blob([csv], { type: 'text/csv;charset=utf-8' }),
           },
         ],
@@ -366,10 +394,10 @@ export function useDataset() {
       setModal({
         type: 'success',
         title: 'Attendance submitted',
-        message: `${fileName} was pushed to ${attendancePath(activeClassName, fileName)} and the dataset was refreshed.`,
+        message: `${fileName} was pushed to ${targetPath} and the dataset was refreshed.`,
         confirmText: 'Continue',
       })
-      setStatus(`Attendance pushed to ${attendancePath(activeClassName, fileName)}.`)
+      setStatus(`Attendance pushed to ${targetPath}.`)
       setDraft({})
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -391,6 +419,139 @@ export function useDataset() {
     slotStart,
     token,
   ])
+
+  const squashCandidates = useMemo(() => findSquashCandidates(snapshot), [snapshot])
+
+  const refreshModal = useCallback((patch: Partial<ModalState>) => {
+    setModal((current) => (current ? { ...current, ...patch } : current))
+  }, [])
+
+  /**
+   * Folds finished months into one <month>.csv each.
+   *
+   * The write and the cleanup are deliberately separate API calls: the summary is
+   * uploaded and read back first, and only once that succeeds are the daily files
+   * removed. If the upload fails nothing is deleted, so a failure can never lose
+   * a month. The user watches the whole thing as a single dialog.
+   */
+  const squashMonths = useCallback(
+    async (targets: readonly SquashCandidate[]) => {
+      if (targets.length === 0) {
+        return
+      }
+
+      setIsSquashing(true)
+      setModal({
+        type: 'progress',
+        title: 'Squashing finished months',
+        message: `Preparing ${targets.length} month${targets.length === 1 ? '' : 's'}... Do not close this tab.`,
+        progress: 0,
+        warning: CLOSE_WARNING,
+      })
+
+      try {
+        const resolved = await requireAccount()
+        const repo = repoFor(resolved.name, repoName)
+        const totalFiles = targets.reduce((total, target) => total + target.dailyPaths.length, 0)
+        let processed = 0
+
+        for (const target of targets) {
+          const classData = snapshot[target.className]
+          if (!classData) {
+            continue
+          }
+          const sessions = classData.sessions.filter((session) => target.dailyPaths.includes(session.path))
+          if (sessions.length === 0) {
+            continue
+          }
+
+          const rows = summariseSessions(classData.roster, sessions)
+          const csv = buildSquashedCsv(rows)
+          const path = squashedAttendancePath(target.className, target.month)
+
+          const phaseBase = Math.round((processed / totalFiles) * 100)
+          const phaseSpan = Math.max(1, Math.round((sessions.length / totalFiles) * 100))
+
+          refreshModal({
+            message: `Squashing ${target.className} ${target.month} (${sessions.length} files)... Do not close this tab.`,
+            progress: phaseBase,
+          })
+
+          await uploadFiles(
+            repo,
+            token,
+            [{ path, content: new Blob([csv], { type: 'text/csv;charset=utf-8' }) }],
+            (percent) => refreshModal({ progress: phaseBase + Math.round((percent / 100) * phaseSpan * 0.5) }),
+          )
+
+          // Read it back before deleting anything.
+          refreshModal({
+            message: `Verifying ${target.className} ${target.month}.csv, then removing the ${sessions.length} daily files... Do not close this tab.`,
+            progress: phaseBase + Math.round(phaseSpan * 0.6),
+          })
+
+          const written = await readSquashedMonth(repo, token, target.className, path, classData.roster)
+          if (!written || written.stats.length === 0) {
+            throw new Error(
+              `${path} did not read back correctly, so the daily files in ${target.month} were left untouched.`,
+            )
+          }
+
+          await deleteFilesIn(repo, token, target.dailyPaths, `Squash ${target.className} ${target.month}`)
+
+          processed += sessions.length
+          refreshModal({ progress: Math.round((processed / totalFiles) * 100) })
+        }
+
+        refreshModal({ message: 'Reading the dataset back...', progress: 99 })
+        const loaded = await loadDataset(repo, token, (percent, message) => refreshModal({ progress: percent, message }))
+        setSnapshot(loaded)
+
+        setModal({
+          type: 'success',
+          title: 'Squash complete',
+          message: `Folded ${targets.length} month${targets.length === 1 ? '' : 's'} into a single summary file each and removed the daily files.`,
+          confirmText: 'Continue',
+        })
+        setStatus(`Squashed ${describeCandidates(targets)} into monthly summary files in ${repo.name}.`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        setModal({ type: 'success', title: 'Squash failed', message, confirmText: 'Dismiss' })
+        setStatus(message)
+      } finally {
+        setIsSquashing(false)
+      }
+    },
+    [refreshModal, repoName, requireAccount, snapshot, token],
+  )
+
+  const confirmSquash = useCallback(() => {
+    if (squashCandidates.length === 0) {
+      return
+    }
+    const targets = squashCandidates
+    setModal({
+      type: 'confirm',
+      title: 'Squash the previous months?',
+      message: `${describeCandidates(targets)} have a newer month folder alongside them, so they are finished. Each becomes one <month>.csv holding every student's classes attended over classes held, and the daily files in that month are removed.`,
+      confirmText: 'Squash',
+      onConfirm: () => {
+        setModal(null)
+        void squashMonths(targets)
+      },
+    })
+  }, [squashCandidates, squashMonths])
+
+  // Offer once per app open, after the first dataset load. A ref keeps this from
+  // re-rendering, since nothing on screen depends on having asked.
+  const squashPromptedRef = useRef(false)
+  useEffect(() => {
+    if (squashPromptedRef.current || squashCandidates.length === 0 || isLoading) {
+      return
+    }
+    squashPromptedRef.current = true
+    confirmSquash()
+  }, [confirmSquash, isLoading, squashCandidates.length])
 
   const toggleDraft = useCallback((rollNumber: string) => {
     setDraft((current) => ({
@@ -445,6 +606,10 @@ export function useDataset() {
     isLoading,
     isSeeding,
     isSubmitting,
+    isSquashing,
+    isWriting,
+    squashCandidates,
+    confirmSquash,
     verifyToken,
     seedDataset,
     submitAttendance,

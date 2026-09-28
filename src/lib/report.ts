@@ -1,11 +1,20 @@
-import type { AttendanceSession, ClassData, ClassReport, RangeMode, StudentStat } from './types'
+import type { AttendanceSession, ClassData, ClassReport, RangeMode, SquashedMonth, StudentStat } from './types'
 
 export function sortSessions(sessions: readonly AttendanceSession[]): AttendanceSession[] {
   return [...sessions].sort((a, b) => a.stamp.localeCompare(b.stamp) || a.path.localeCompare(b.path))
 }
 
-export function listMonths(sessions: readonly AttendanceSession[]): string[] {
-  return [...new Set(sessions.map((session) => session.month))].sort((a, b) => b.localeCompare(a))
+export function listMonths(classData: Pick<ClassData, 'sessions' | 'squashedMonths'>): string[] {
+  const months = new Set<string>()
+  for (const session of classData.sessions) {
+    if (session.month) {
+      months.add(session.month)
+    }
+  }
+  for (const squashed of classData.squashedMonths) {
+    months.add(squashed.month)
+  }
+  return [...months].sort((a, b) => b.localeCompare(a))
 }
 
 export function formatMonth(month: string): string {
@@ -26,15 +35,41 @@ export function filterSessions(
   return sortSessions(sessions.filter((session) => session.month === month))
 }
 
-function buildStats(classData: ClassData, sessions: readonly AttendanceSession[]): StudentStat[] {
-  const held = sessions.length
+export function filterSquashedMonths(
+  squashedMonths: readonly SquashedMonth[],
+  mode: RangeMode,
+  month: string,
+): SquashedMonth[] {
+  const selected = mode === 'total' ? squashedMonths : squashedMonths.filter((entry) => entry.month === month)
+  return [...selected].sort((a, b) => a.month.localeCompare(b.month))
+}
 
+function percentageOf(attended: number, held: number): number {
+  return held === 0 ? 0 : Math.round((attended / held) * 100)
+}
+
+/**
+ * Totals across daily sessions and squashed months. Both sides contribute plain
+ * counts, so a month that was folded still adds up exactly as it did before.
+ */
+function buildStats(
+  classData: ClassData,
+  sessions: readonly AttendanceSession[],
+  squashedMonths: readonly SquashedMonth[],
+): StudentStat[] {
+  const held = sessions.length + squashedMonths.reduce((total, entry) => total + entry.classesHeld, 0)
   const attendedByRoll = new Map<string, number>()
+
   for (const session of sessions) {
     for (const entry of session.entries) {
       if (entry.status === 'present') {
         attendedByRoll.set(entry.rollNumber, (attendedByRoll.get(entry.rollNumber) ?? 0) + 1)
       }
+    }
+  }
+  for (const squashed of squashedMonths) {
+    for (const stat of squashed.stats) {
+      attendedByRoll.set(stat.student.rollNumber, (attendedByRoll.get(stat.student.rollNumber) ?? 0) + stat.attended)
     }
   }
 
@@ -44,7 +79,7 @@ function buildStats(classData: ClassData, sessions: readonly AttendanceSession[]
       student,
       attended,
       held,
-      percentage: held === 0 ? 0 : Math.round((attended / held) * 100),
+      percentage: percentageOf(attended, held),
     }
   })
 }
@@ -56,7 +91,8 @@ export function buildReport(
   months: readonly string[],
 ): ClassReport {
   const sessions = filterSessions(classData.sessions, mode, month)
-  const stats = buildStats(classData, sessions)
+  const squashedMonths = filterSquashedMonths(classData.squashedMonths, mode, month)
+  const stats = buildStats(classData, sessions, squashedMonths)
   const averagePercentage =
     stats.length === 0 ? 0 : Math.round(stats.reduce((total, stat) => total + stat.percentage, 0) / stats.length)
 
@@ -65,9 +101,10 @@ export function buildReport(
     mode,
     month,
     sessions,
+    squashedMonths,
     months: [...months],
     stats,
-    classesHeld: sessions.length,
+    classesHeld: sessions.length + squashedMonths.reduce((total, entry) => total + entry.classesHeld, 0),
     averagePercentage,
   }
 }
@@ -78,6 +115,7 @@ export function emptyReport(mode: RangeMode, month: string): ClassReport {
     mode,
     month,
     sessions: [],
+    squashedMonths: [],
     months: [],
     stats: [],
     classesHeld: 0,

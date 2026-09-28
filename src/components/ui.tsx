@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { X } from 'lucide-react'
+import { TriangleAlert, X } from 'lucide-react'
 import type { ModalState } from '../lib/types'
 
 export function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -166,6 +166,13 @@ export function Modal({ modal, onClose }: { modal: ModalState; onClose: () => vo
         </div>
 
         <p className="mt-4 text-sm leading-6 text-slate-600">{modal.message}</p>
+
+        {modal.warning ? (
+          <p className="mt-4 flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium leading-5 text-amber-900">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            {modal.warning}
+          </p>
+        ) : null}
 
         {modal.type === 'progress' ? (
           <div className="mt-5">

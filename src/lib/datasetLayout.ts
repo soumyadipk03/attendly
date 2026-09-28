@@ -4,6 +4,10 @@ export const CLASS_SEGMENT = 'class'
 export const ROSTER_FILE_NAME = 'students.csv'
 export const ATTENDANCE_FILE_SUFFIX = '_attendance.csv'
 export const ATTENDANCE_FILE_PATTERN = /^(\d{2})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})_attendance\.csv$/i
+/** Attendance lives one month deep: data/attendance/class/<class>/<YYYY-MM>/<file>.csv */
+export const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/
+export const SQUASHED_MONTH_PATTERN = /^(\d{4}-(?:0[1-9]|1[0-2]))\.csv$/i
+export const CLASS_PATH_INDEX = 3
 
 export function studentsClassDir(className: string): string {
   return `${STUDENTS_ROOT}/${CLASS_SEGMENT}/${className}`
@@ -17,8 +21,42 @@ export function attendanceClassDir(className: string): string {
   return `${ATTENDANCE_ROOT}/${CLASS_SEGMENT}/${className}`
 }
 
-export function attendancePath(className: string, fileName: string): string {
-  return `${attendanceClassDir(className)}/${fileName}`
+/** Folder holding one month of daily attendance files for a class. */
+export function attendanceMonthDir(className: string, month: string): string {
+  return `${attendanceClassDir(className)}/${month}`
+}
+
+export function attendancePath(className: string, month: string, fileName: string): string {
+  return `${attendanceMonthDir(className, month)}/${fileName}`
+}
+
+/** The squashed month file, sitting beside the month folders it replaces. */
+export function squashedAttendancePath(className: string, month: string): string {
+  return `${attendanceClassDir(className)}/${month}.csv`
+}
+
+export function squashedMonthOf(fileName: string): string | null {
+  return SQUASHED_MONTH_PATTERN.exec(fileName)?.[1] ?? null
+}
+
+export function currentMonth(now = new Date()): string {
+  return `${now.getFullYear()}-${twoDigit(now.getMonth() + 1)}`
+}
+
+/**
+ * True for daily files that live inside a month folder. Squashed <month>.csv
+ * files are deliberately excluded: they are already month-level.
+ */
+export function isMonthDayPath(path: string): boolean {
+  const segments = path.split('/').filter(Boolean)
+  if (segments.length < 2) {
+    return false
+  }
+  const month = squashedMonthOf(segments[segments.length - 1])
+  if (month) {
+    return false
+  }
+  return MONTH_PATTERN.test(segments[segments.length - 2] ?? '') && isAttendancePath(path)
 }
 
 function twoDigit(value: number): string {
@@ -119,8 +157,14 @@ export function isRosterPath(path: string): boolean {
   return path.toLowerCase().endsWith(`/${ROSTER_FILE_NAME}`) || path.toLowerCase() === ROSTER_FILE_NAME
 }
 
+/** True for both daily files and squashed month files. */
 export function isAttendancePath(path: string): boolean {
-  return ATTENDANCE_FILE_PATTERN.test(fileNameOf(path))
+  const fileName = fileNameOf(path)
+  return ATTENDANCE_FILE_PATTERN.test(fileName) || squashedMonthOf(fileName) !== null
+}
+
+export function isSquashedPath(path: string): boolean {
+  return squashedMonthOf(fileNameOf(path)) !== null
 }
 
 export function fileNameOf(path: string): string {
@@ -128,9 +172,23 @@ export function fileNameOf(path: string): string {
   return segments[segments.length - 1] ?? ''
 }
 
+/**
+ * Every path is data/<root>/class/<class>/... so the class always sits at a fixed
+ * index, whether or not a month folder follows it.
+ */
 export function classNameOf(path: string): string {
+  return path.split('/').filter(Boolean)[CLASS_PATH_INDEX] ?? ''
+}
+
+/** Month folder name for a daily file, or the month a squashed file represents. */
+export function attendanceMonthOf(path: string): string | null {
   const segments = path.split('/').filter(Boolean)
-  return segments[segments.length - 2] ?? ''
+  const squashed = squashedMonthOf(segments[segments.length - 1] ?? '')
+  if (squashed) {
+    return squashed
+  }
+  const folder = segments[segments.length - 2] ?? ''
+  return MONTH_PATTERN.test(folder) ? folder : null
 }
 
 export function sortByName(values: Iterable<string>): string[] {

@@ -4,6 +4,7 @@ import { ClassPicker } from '../components/ClassPicker'
 import { EmptyState, GhostButton, PageHeading, Panel, StatCard } from '../components/ui'
 import type { DatasetController } from '../hooks/useDataset'
 import { toCsv } from '../lib/csv'
+import { fileNameOf } from '../lib/datasetLayout'
 import { sessionNoteOf, sessionSlotOf } from '../lib/records'
 import { formatMonth, percentageTone } from '../lib/report'
 import type { RangeMode } from '../lib/types'
@@ -25,15 +26,22 @@ export function ShowAttendance({ app }: { app: DatasetController }) {
     setRangeMonth,
   } = app
 
-  const sessionsByMonth = useMemo(() => {
-    const groups = new Map<string, typeof report.sessions>()
+  // A squashed month has no individual files left, so it is shown as one
+  // summary row alongside the daily sessions of the months that are still live.
+  const squashedByMonth = useMemo(() => new Map(report.squashedMonths.map((entry) => [entry.month, entry])), [
+    report.squashedMonths,
+  ])
+
+  const monthOrder = useMemo(() => {
+    const months = new Set<string>()
     for (const session of report.sessions) {
-      const bucket = groups.get(session.month) ?? []
-      bucket.push(session)
-      groups.set(session.month, bucket)
+      months.add(session.month)
     }
-    return [...groups.entries()]
-  }, [report.sessions])
+    for (const month of squashedByMonth.keys()) {
+      months.add(month)
+    }
+    return [...months].sort((a, b) => b.localeCompare(a))
+  }, [report.sessions, squashedByMonth])
 
   const rangeLabel = rangeMode === 'monthly' && rangeMonth ? formatMonth(rangeMonth) : 'All time'
 
@@ -230,30 +238,43 @@ export function ShowAttendance({ app }: { app: DatasetController }) {
               </p>
             </div>
 
-            {sessionsByMonth.length === 0 ? (
-              <p className="mt-3 text-sm text-slate-500">No attendance files matched this range.</p>
+            {monthOrder.length === 0 ? (
+              <p className="mt-3 text-sm text-slate-500">No attendance matched this range.</p>
             ) : (
               <div className="mt-3 space-y-4">
-                {sessionsByMonth.map(([month, sessions]) => (
-                  <div key={month}>
-                    <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">{formatMonth(month)}</p>
-                    <ul className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {sessions.map((session) => (
-                        <li
-                          key={session.path}
-                          className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
-                        >
-                          <span className="font-mono text-slate-600">{session.fileName}</span>
-                          <span className="text-slate-400">
-                            {session.date}
-                            {sessionSlotOf(session) ? ` · ${sessionSlotOf(session)}` : ''}
-                            {sessionNoteOf(session) ? ` · ${sessionNoteOf(session)}` : ''}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
+                {monthOrder.map((month) => {
+                  const squashed = squashedByMonth.get(month)
+                  const sessions = report.sessions.filter((session) => session.month === month)
+
+                  return (
+                    <div key={month}>
+                      <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">{formatMonth(month)}</p>
+                      <ul className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        {squashed ? (
+                          <li className="flex items-center justify-between gap-2 rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-xs">
+                            <span className="font-mono text-indigo-700">{fileNameOf(squashed.path)}</span>
+                            <span className="text-indigo-500">
+                              squashed · {squashed.classesHeld} class{squashed.classesHeld === 1 ? '' : 'es'} held
+                            </span>
+                          </li>
+                        ) : null}
+                        {sessions.map((session) => (
+                          <li
+                            key={session.path}
+                            className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                          >
+                            <span className="font-mono text-slate-600">{session.fileName}</span>
+                            <span className="text-slate-400">
+                              {session.date}
+                              {sessionSlotOf(session) ? ` · ${sessionSlotOf(session)}` : ''}
+                              {sessionNoteOf(session) ? ` · ${sessionNoteOf(session)}` : ''}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
