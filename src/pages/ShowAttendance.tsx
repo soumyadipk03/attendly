@@ -94,7 +94,7 @@ export function ShowAttendance({ app }: { app: DatasetController }) {
               classNames={classNames}
               value={activeClassName}
               onChange={selectClass}
-              hint={`${app.roster.length} students in data/students/class/${activeClassName}/students.csv`}
+              hint={`${app.roster.length} students in data/students/${activeClassName}/students.csv`}
             />
 
             <div className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 shadow-sm">
@@ -152,7 +152,7 @@ export function ShowAttendance({ app }: { app: DatasetController }) {
             <StatCard
               label="Sessions available"
               value={String(app.activeClass?.sessions.length ?? 0)}
-              hint="files in data/attendance/class"
+              hint="files in data/attendance"
             />
           </div>
 

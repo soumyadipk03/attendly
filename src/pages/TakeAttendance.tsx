@@ -52,7 +52,7 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
         <div className="mt-6">
           <EmptyState
             title="No classes pulled from Hugging Face yet"
-            message="Rosters live in the dataset at data/students/class/<class>/students.csv. Add a Hugging Face token and the dataset loads on its own, or use Reset dataset on Accounts to seed the sample classes."
+            message="Rosters live in the dataset at data/students/<class>/students.csv. Add a Hugging Face token and the dataset loads on its own, or use Reset dataset on Accounts to seed the sample classes."
           />
         </div>
       ) : (
@@ -115,7 +115,7 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
             <div className="mt-4">
               <EmptyState
                 title={`No roster for ${activeClassName}`}
-                message="The dataset has an attendance folder for this class but no students.csv. Add data/students/class/mock1/students.csv style file, then reload the dataset."
+                message="The dataset has an attendance folder for this class but no students.csv. Add data/students/mock1/students.csv style file, then reload the dataset."
               />
             </div>
           ) : (

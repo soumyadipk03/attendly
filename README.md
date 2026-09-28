@@ -11,23 +11,21 @@ The app reads and writes one folder tree inside a private Hugging Face dataset:
 ```
 data/
   students/
-    class/
-      mock1/
-        students.csv
-      mock2/
-        students.csv
+    mock1/
+      students.csv
+    mock2/
+      students.csv
   attendance/
-    class/
-      mock1/
-        2026-07/                 # month folders are numeric YYYY-MM
-          010726_090000_attendance.csv
-          010826_090000_attendance.csv
-          ...
-        2026-07.csv              # squashed summary, once the month is finished
-        2026-08/
-          ...
-      mock2/
+    mock1/
+      2026-07/                 # month folders are numeric YYYY-MM
+        010726_090000_attendance.csv
+        010826_090000_attendance.csv
         ...
+      2026-07.csv              # squashed summary, once the month is finished
+      2026-08/
+        ...
+    mock2/
+      ...
 ```
 
 - `students.csv` has exactly three columns: `name`, `roll_number`, `course`. The class name comes from the folder, not from a column. `roll_number` is free-form: one digit, several digits, or a long id all work, and it is compared numerically when the roster is ordered. Students inside one class folder can be on different courses, so the roster is always displayed ordered by **course first, then roll number** (courses become contiguous groups).
@@ -58,9 +56,9 @@ If the upload or the read-back fails, nothing is deleted, so a failure cannot lo
 
 | Tab | Behaviour |
 | --- | --- |
-| Take Attendance | Pick a class, set the slot the class runs in (from/to), toggle each student, submit. The session is written to `data/attendance/class/<class>/<YYYY-MM>/ddmmyy_tttttt_attendance.csv` and the dataset is re-read. |
+| Take Attendance | Pick a class, set the slot the class runs in (from/to), toggle each student, submit. The session is written to `data/attendance/<class>/<YYYY-MM>/ddmmyy_tttttt_attendance.csv` and the dataset is re-read. |
 | Show Attendance | Pick a class, then a range. **Monthly** shows one selected month, **Total** shows everything. Lists classes attended / total classes held plus an attendance percentage per student, and the months with their session files or squash summary. |
-| Students | Roster for the **selected class only** — roll no, name, course, grouped by course and searchable. |
+| Students | Roster for the **selected class only** — roll no, name, course, grouped by course and searchable. **Create a class** uploads a roster CSV under a class name you choose. |
 | Accounts | Hugging Face token, token verification, and the dataset actions below. |
 
 The dataset loads by itself as soon as the app opens, so there is no Load button. On Accounts:
@@ -69,9 +67,20 @@ The dataset loads by itself as soon as the app opens, so there is no Load button
 - **Verify HF token** checks the token and then pulls the dataset, which is what a first-time user needs.
 - **Clear HF token** drops the token and the cached dataset from the browser.
 
+### Creating a class from a CSV
+
+The **Create a class** panel on Students turns a roster CSV into a class. Pick a class name, choose a `.csv`, and press **Create class**: the file is pushed to `data/students/<class>/students.csv` under that name, whatever the uploaded file was called, and the dataset is re-read so the new class appears immediately.
+
+Two checks run before anything is written:
+
+- The CSV is parsed first. A file that yields no students is refused, because a roster that cannot be read would otherwise create a class folder that just renders empty with no explanation.
+- The class name is checked as a folder segment. Slashes, `..`, leading dots, control characters and surrounding spaces are rejected rather than rewritten, so a name like `../evil` can never point the write outside `data/students/`.
+
+Choosing a name that already exists asks before overwriting, and only replaces the roster; attendance already recorded for that class is left alone. Header aliases are accepted, so `Name` / `Roll No` / `Subject` works as well as the exact `name,roll_number,course`.
+
 ## Writing to Hugging Face
 
-Every write (seeding, submitting attendance, squashing) shows a blocking progress dialog with a warning banner telling you not to close the tab, and a `beforeunload` handler asks the browser to confirm before you navigate away.
+Every write (seeding, submitting attendance, creating a class, squashing) shows a blocking progress dialog with a warning banner telling you not to close the tab, and a `beforeunload` handler asks the browser to confirm before you navigate away.
 
 Browsers do not allow a page to stop you closing a tab outright. `beforeunload` only triggers the browser's own "Leave site?" prompt, which some browsers and mobile skip. The dialog copy is therefore worded as a warning, not a guarantee.
 

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { TriangleAlert, X } from 'lucide-react'
+import { CircleCheck, TriangleAlert, X } from 'lucide-react'
 import type { ModalState } from '../lib/types'
 
 export function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -177,7 +177,10 @@ export function Modal({ modal, onClose }: { modal: ModalState; onClose: () => vo
         {modal.type === 'progress' ? (
           <div className="mt-5">
             <div className="flex items-center justify-between text-xs uppercase tracking-[0.18em] text-slate-500">
-              <span>Progress</span>
+              <span className="flex items-center gap-1.5">
+                {(modal.progress ?? 0) >= 100 ? <CircleCheck className="h-3.5 w-3.5 text-emerald-500" /> : null}
+                {(modal.progress ?? 0) >= 100 ? 'Complete' : 'Progress'}
+              </span>
               <span>{modal.progress ?? 0}%</span>
             </div>
             <div className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
@@ -189,15 +192,23 @@ export function Modal({ modal, onClose }: { modal: ModalState; onClose: () => vo
           </div>
         ) : null}
 
-        <div className="mt-6 flex justify-end">
-          <button
-            type="button"
-            onClick={modal.type === 'confirm' ? () => modal.onConfirm?.() : onClose}
-            className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
-          >
-            {modal.confirmText ?? (modal.type === 'confirm' ? 'Confirm' : 'Continue')}
-          </button>
-        </div>
+        {/* No button while work is in flight: the dialog stays put until the
+            operation reports back, so nothing can be dismissed mid-write. */}
+        {modal.type === 'progress' ? (
+          <p className="mt-6 text-center text-xs text-slate-400">
+            This dialog closes on its own once the dataset reports back.
+          </p>
+        ) : (
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              onClick={modal.type === 'confirm' ? () => modal.onConfirm?.() : onClose}
+              className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
+            >
+              {modal.confirmText ?? (modal.type === 'confirm' ? 'Confirm' : 'Continue')}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

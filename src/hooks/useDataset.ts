@@ -16,12 +16,14 @@ import {
   defaultSlotRange,
   formatSlotRange,
   isSlotRangeValid,
+  isValidClassName,
+  rosterPath,
   sortByName,
   squashedAttendancePath,
   toIsoDate,
 } from '../lib/datasetLayout'
 import { buildMockSeedFiles } from '../lib/mockSeed'
-import { toAttendanceCsv } from '../lib/records'
+import { ROSTER_HEADER, parseRosterCsv, toAttendanceCsv } from '../lib/records'
 import { buildReport, emptyReport, listMonths } from '../lib/report'
 import { buildSquashedCsv, describeCandidates, findSquashCandidates, summariseSessions } from '../lib/squash'
 import type {
@@ -71,10 +73,11 @@ export function useDataset() {
   const [isSeeding, setIsSeeding] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSquashing, setIsSquashing] = useState(false)
+  const [isUploadingRoster, setIsUploadingRoster] = useState(false)
   const [modal, setModal] = useState<ModalState>(null)
 
   // Any Hugging Face write in flight. Used to warn before the tab is closed.
-  const isWriting = isSeeding || isSubmitting || isSquashing
+  const isWriting = isSeeding || isSubmitting || isSquashing || isUploadingRoster
 
   useEffect(() => {
     if (!isWriting) {
@@ -178,46 +181,43 @@ export function useDataset() {
     return resolved
   }, [account, token])
 
-  const pullDataset = useCallback(
-    async (options: { announce?: boolean } = {}): Promise<DatasetSnapshot | null> => {
-      const announce = options.announce ?? true
-      setIsLoading(true)
-      try {
-        const resolved = await requireAccount()
-        const repo = repoFor(resolved.name, repoName)
-        const loaded = await loadDataset(repo, token, (percent, message) => {
-          setModal({ type: 'progress', title: 'Loading dataset', message, progress: percent })
-        })
-        setSnapshot(loaded)
-        if (announce) {
-          setModal({
-            type: 'success',
-            title: 'Dataset loaded',
-            message: `Pulled ${Object.keys(loaded).length} class folder${Object.keys(loaded).length === 1 ? '' : 's'} from ${repo.name}.`,
-            confirmText: 'Continue',
-          })
-        }
-        setStatus(`Dataset loaded from ${repo.name}.`)
-        return loaded
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        if (announce) {
-          setModal({ type: 'success', title: 'Load failed', message, confirmText: 'Dismiss' })
-        }
-        setStatus(message)
-        return null
-      } finally {
-        setIsLoading(false)
-      }
-    },
-    [repoName, requireAccount, token],
-  )
+  // Always reports back through a dialog. A load that finishes silently is
+  // indistinguishable from one that never ran, so success and failure both
+  // confirm, and the progress dialog is reused rather than stacked.
+  const pullDataset = useCallback(async (): Promise<DatasetSnapshot | null> => {
+    setIsLoading(true)
+    try {
+      const resolved = await requireAccount()
+      const repo = repoFor(resolved.name, repoName)
+      const loaded = await loadDataset(repo, token, (percent, message) => {
+        setModal({ type: 'progress', title: 'Loading dataset', message, progress: percent })
+      })
+      setSnapshot(loaded)
+      setModal({
+        type: 'success',
+        title: 'Dataset loaded',
+        message: `Pulled ${Object.keys(loaded).length} class folder${Object.keys(loaded).length === 1 ? '' : 's'} from ${repo.name}.`,
+        confirmText: 'Continue',
+      })
+      setStatus(`Dataset loaded from ${repo.name}.`)
+      return loaded
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setModal({ type: 'success', title: 'Load failed', message, confirmText: 'Dismiss' })
+      setStatus(message)
+      return null
+    } finally {
+      setIsLoading(false)
+    }
+  }, [repoName, requireAccount, token])
 
   // Declared after pullDataset because the dependency array below reads it.
   const verifyToken = useCallback(async () => {
     if (!token.trim()) {
       setAccount(null)
-      setStatus('Paste a Hugging Face API token before verifying it.')
+      const message = 'Paste a Hugging Face API token before verifying it.'
+      setStatus(message)
+      setModal({ type: 'success', title: 'No token to verify', message, confirmText: 'Dismiss' })
       return
     }
 
@@ -227,11 +227,13 @@ export function useDataset() {
       setAccount(resolved)
       setStatus(`Token verified for ${resolved.name}. Loading ${repoFor(resolved.name, repoName).name}...`)
       // Verifying is the natural moment to pull the data, since the app auto-loads
-      // on open only when a token is already stored.
-      void pullDataset({ announce: false })
+      // on open only when a token is already stored. pullDataset reports the result.
+      void pullDataset()
     } catch (error) {
       setAccount(null)
-      setStatus(`Token verification failed: ${error instanceof Error ? error.message : String(error)}`)
+      const message = `Token verification failed: ${error instanceof Error ? error.message : String(error)}`
+      setStatus(message)
+      setModal({ type: 'success', title: 'Verification failed', message, confirmText: 'Dismiss' })
     } finally {
       setIsVerifying(false)
     }
@@ -256,7 +258,7 @@ export function useDataset() {
     // exactly what effects are for. pullDataset flips isLoading before it awaits,
     // which is what the progress modal is driven from.
     // oxlint-disable-next-line react/set-state-in-effect
-    void pullDataset({ announce: false })
+    void pullDataset()
   }, [pullDataset, token])
 
   const seedDataset = useCallback(async () => {
@@ -346,7 +348,7 @@ export function useDataset() {
     setModal({
       type: 'progress',
       title: 'Uploading attendance',
-      message: `Writing ${fileName} to data/attendance/class/${activeClassName}/${month}/. Do not close this tab.`,
+      message: `Writing ${fileName} to data/attendance/${activeClassName}/${month}/. Do not close this tab.`,
       progress: 10,
       warning: CLOSE_WARNING,
     })
@@ -420,11 +422,121 @@ export function useDataset() {
     token,
   ])
 
-  const squashCandidates = useMemo(() => findSquashCandidates(snapshot), [snapshot])
-
   const refreshModal = useCallback((patch: Partial<ModalState>) => {
     setModal((current) => (current ? { ...current, ...patch } : current))
   }, [])
+
+  const pendingRosterRef = useRef<{ className: string; text: string; count: number } | null>(null)
+
+  const performRosterUpload = useCallback(async () => {
+    const pending = pendingRosterRef.current
+    if (!pending) {
+      return
+    }
+    pendingRosterRef.current = null
+    const target = rosterPath(pending.className)
+
+    setIsUploadingRoster(true)
+    setModal({
+      type: 'progress',
+      title: 'Creating class',
+      message: `Uploading ${pending.count} student${pending.count === 1 ? '' : 's'} to ${target}. Do not close this tab.`,
+      progress: 10,
+      warning: CLOSE_WARNING,
+    })
+
+    try {
+      const resolved = await requireAccount()
+      const repo = repoFor(resolved.name, repoName)
+      await ensureRepo(repo, token)
+
+      refreshModal({ progress: 45 })
+
+      await uploadFiles(
+        repo,
+        token,
+        [{ path: target, content: new Blob([pending.text], { type: 'text/csv;charset=utf-8' }) }],
+        (percent) => {
+          refreshModal({ progress: 45 + Math.round((percent / 100) * 50) })
+        },
+      )
+
+      refreshModal({ progress: 100, message: 'Refreshing dataset...' })
+      const loaded = await loadDataset(repo, token, (percent, message) => {
+        refreshModal({ progress: percent, message })
+      })
+      setSnapshot(loaded)
+      selectClass(pending.className)
+
+      setModal({
+        type: 'success',
+        title: 'Class created',
+        message: `${pending.count} student${pending.count === 1 ? '' : 's'} were pushed to ${target} and the dataset was refreshed.`,
+        confirmText: 'Continue',
+      })
+      setStatus(`${pending.className} created at ${target}.`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setModal({ type: 'success', title: 'Upload failed', message, confirmText: 'Dismiss' })
+      setStatus(message)
+    } finally {
+      setIsUploadingRoster(false)
+    }
+  }, [refreshModal, repoName, requireAccount, selectClass, token])
+
+  const uploadRoster = useCallback(
+    async (className: string, file: File) => {
+      const trimmed = className.trim()
+      if (!isValidClassName(trimmed)) {
+        const message =
+          'Give the class a plain folder name: letters, numbers, spaces and dashes only, with no slashes or dots at the start.'
+        setModal({ type: 'success', title: 'Class name not usable', message, confirmText: 'Dismiss' })
+        setStatus(message)
+        return
+      }
+
+      let text: string
+      try {
+        text = await file.text()
+      } catch (error) {
+        const message = `Could not read that file: ${error instanceof Error ? error.message : String(error)}`
+        setModal({ type: 'success', title: 'File not readable', message, confirmText: 'Dismiss' })
+        setStatus(message)
+        return
+      }
+
+      // Parse before writing: a roster that yields no students would create a
+      // class folder that renders empty, with no clue why.
+      const students = parseRosterCsv(text)
+      if (students.length === 0) {
+        const message = `${file.name} has no readable students. It needs a header row and columns for name, roll_number and course.`
+        setModal({ type: 'success', title: 'No students in that file', message, confirmText: 'Dismiss' })
+        setStatus(message)
+        return
+      }
+
+      pendingRosterRef.current = { className: trimmed, text, count: students.length }
+
+      if (classNames.includes(trimmed)) {
+        setModal({
+          type: 'confirm',
+          title: `Replace the roster for ${trimmed}?`,
+          message: `${trimmed} already exists, so its ${ROSTER_HEADER.join(', ')} file will be overwritten with the ${students.length} student${students.length === 1 ? '' : 's'} in ${file.name}. Attendance already recorded for this class is not changed, but the old roster is replaced.`,
+          confirmText: 'Replace roster',
+          onConfirm: () => {
+            setModal(null)
+            void performRosterUpload()
+          },
+        })
+        return
+      }
+
+      void performRosterUpload()
+    },
+    [classNames, performRosterUpload],
+  )
+
+  const squashCandidates = useMemo(() => findSquashCandidates(snapshot), [snapshot])
 
   /**
    * Folds finished months into one <month>.csv each.
@@ -542,16 +654,17 @@ export function useDataset() {
     })
   }, [squashCandidates, squashMonths])
 
-  // Offer once per app open, after the first dataset load. A ref keeps this from
-  // re-rendering, since nothing on screen depends on having asked.
+  // Offer once per app open, but only once the load has been acknowledged. The
+  // modal is a single slot, so prompting while a dialog is up would replace the
+  // success message before it could be read.
   const squashPromptedRef = useRef(false)
   useEffect(() => {
-    if (squashPromptedRef.current || squashCandidates.length === 0 || isLoading) {
+    if (squashPromptedRef.current || squashCandidates.length === 0 || isLoading || modal) {
       return
     }
     squashPromptedRef.current = true
     confirmSquash()
-  }, [confirmSquash, isLoading, squashCandidates.length])
+  }, [confirmSquash, isLoading, modal, squashCandidates.length])
 
   const toggleDraft = useCallback((rollNumber: string) => {
     setDraft((current) => ({
@@ -607,12 +720,14 @@ export function useDataset() {
     isSeeding,
     isSubmitting,
     isSquashing,
+    isUploadingRoster,
     isWriting,
     squashCandidates,
     confirmSquash,
     verifyToken,
     seedDataset,
     submitAttendance,
+    uploadRoster,
   }
 }
 

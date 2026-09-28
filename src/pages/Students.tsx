@@ -1,12 +1,34 @@
-import { useMemo, useState } from 'react'
-import { GraduationCap, Search } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import { GraduationCap, Search, Upload } from 'lucide-react'
 import { ClassPicker } from '../components/ClassPicker'
-import { EmptyState, PageHeading, Panel, StatCard } from '../components/ui'
+import { EmptyState, Field, PageHeading, Panel, PrimaryButton, StatCard } from '../components/ui'
 import type { DatasetController } from '../hooks/useDataset'
 
 export function Students({ app }: { app: DatasetController }) {
-  const { classNames, activeClassName, selectClass, roster } = app
+  const { classNames, activeClassName, selectClass, roster, uploadRoster, isUploadingRoster } = app
   const [query, setQuery] = useState('')
+  const [newClassName, setNewClassName] = useState('')
+  const [rosterFile, setRosterFile] = useState<File | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const chooseFile = (file: File | null) => {
+    setRosterFile(file)
+    if (file && !newClassName.trim()) {
+      setNewClassName(file.name.replace(/\.csv$/i, '').trim())
+    }
+  }
+
+  const createClass = () => {
+    if (!rosterFile || !newClassName.trim()) {
+      return
+    }
+    void uploadRoster(newClassName, rosterFile)
+    setRosterFile(null)
+    setNewClassName('')
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -38,6 +60,47 @@ export function Students({ app }: { app: DatasetController }) {
         }
       />
 
+      <div className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 p-4">
+        <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Create a class</p>
+        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,14rem)_1fr_auto] md:items-start">
+          <Field label="Class name" hint="Becomes the folder name">
+            <input
+              value={newClassName}
+              onChange={(event) => setNewClassName(event.target.value)}
+              placeholder="mock1"
+              list="known-classes"
+              className="w-full bg-transparent text-base font-medium text-slate-700 outline-none placeholder:text-slate-300"
+            />
+          </Field>
+          <Field
+            label="Roster CSV"
+            hint="Columns: name, roll_number, course. Uploaded as students.csv."
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(event) => chooseFile(event.target.files?.[0] ?? null)}
+              className="w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white"
+            />
+          </Field>
+          <div className="md:pt-7">
+            <PrimaryButton
+              onClick={createClass}
+              disabled={!rosterFile || !newClassName.trim() || isUploadingRoster}
+            >
+              <Upload className="h-4 w-4" />
+              {isUploadingRoster ? 'Uploading...' : 'Create class'}
+            </PrimaryButton>
+          </div>
+        </div>
+        <datalist id="known-classes">
+          {classNames.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+      </div>
+
       {classNames.length === 0 ? (
         <div className="mt-6">
           <EmptyState
@@ -60,14 +123,14 @@ export function Students({ app }: { app: DatasetController }) {
           </div>
 
           <p className="mt-3 font-mono text-xs text-slate-500">
-            data/students/class/{activeClassName}/students.csv
+            data/students/{activeClassName}/students.csv
           </p>
 
           {roster.length === 0 ? (
             <div className="mt-5">
               <EmptyState
                 title={`No students.csv for ${activeClassName}`}
-                message="Add the file at data/students/class/<class>/students.csv with name, roll_number and course columns, then reload the dataset."
+                message="Add the file at data/students/<class>/students.csv with name, roll_number and course columns, then reload the dataset."
               />
             </div>
           ) : visible.length === 0 ? (

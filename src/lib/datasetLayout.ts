@@ -1,16 +1,38 @@
 export const STUDENTS_ROOT = 'data/students'
 export const ATTENDANCE_ROOT = 'data/attendance'
-export const CLASS_SEGMENT = 'class'
 export const ROSTER_FILE_NAME = 'students.csv'
 export const ATTENDANCE_FILE_SUFFIX = '_attendance.csv'
 export const ATTENDANCE_FILE_PATTERN = /^(\d{2})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})_attendance\.csv$/i
-/** Attendance lives one month deep: data/attendance/class/<class>/<YYYY-MM>/<file>.csv */
+/** Attendance lives one month deep: data/attendance/<class>/<YYYY-MM>/<file>.csv */
 export const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/
 export const SQUASHED_MONTH_PATTERN = /^(\d{4}-(?:0[1-9]|1[0-2]))\.csv$/i
-export const CLASS_PATH_INDEX = 3
+export const CLASS_PATH_INDEX = 2
 
 export function studentsClassDir(className: string): string {
-  return `${STUDENTS_ROOT}/${CLASS_SEGMENT}/${className}`
+  return `${STUDENTS_ROOT}/${className}`
+}
+
+/**
+ * Class names are typed by the user and become folder names, so they are
+ * restricted to what a single safe folder segment allows. Anything that could
+ * climb out of data/<root>/ — separators, dot segments, control characters —
+ * is rejected rather than sanitised, so a rejected name stays visible.
+ */
+export function isValidClassName(className: string): boolean {
+  if (!className || className.length > 64) {
+    return false
+  }
+  if (className !== className.trim() || className.startsWith('.')) {
+    return false
+  }
+  for (const character of className) {
+    const code = character.codePointAt(0) ?? 0
+    const isControl = code < 32 || code === 127
+    if (isControl || character === '/' || character === '\\') {
+      return false
+    }
+  }
+  return true
 }
 
 export function rosterPath(className: string): string {
@@ -18,7 +40,7 @@ export function rosterPath(className: string): string {
 }
 
 export function attendanceClassDir(className: string): string {
-  return `${ATTENDANCE_ROOT}/${CLASS_SEGMENT}/${className}`
+  return `${ATTENDANCE_ROOT}/${className}`
 }
 
 /** Folder holding one month of daily attendance files for a class. */
@@ -173,7 +195,7 @@ export function fileNameOf(path: string): string {
 }
 
 /**
- * Every path is data/<root>/class/<class>/... so the class always sits at a fixed
+ * Every path is data/<root>/<class>/... so the class always sits at a fixed
  * index, whether or not a month folder follows it.
  */
 export function classNameOf(path: string): string {

@@ -1,7 +1,6 @@
 import {
   ATTENDANCE_FILE_SUFFIX,
   ATTENDANCE_ROOT,
-  CLASS_SEGMENT,
   ROSTER_FILE_NAME,
   STUDENTS_ROOT,
   attendancePath,
@@ -122,8 +121,8 @@ attendance session for the authenticated Hugging Face account.
 ## Layout
 
 \`\`\`
-${STUDENTS_ROOT}/${CLASS_SEGMENT}/<class>/${ROSTER_FILE_NAME}
-${ATTENDANCE_ROOT}/${CLASS_SEGMENT}/<class>/<YYYY-MM>/<ddmmyy>_<tttttt>${ATTENDANCE_FILE_SUFFIX}
+${STUDENTS_ROOT}/<class>/${ROSTER_FILE_NAME}
+${ATTENDANCE_ROOT}/<class>/<YYYY-MM>/<ddmmyy>_<tttttt>${ATTENDANCE_FILE_SUFFIX}
 \`\`\`
 
 - Month folders are numeric, \`YYYY-MM\`, never a month name.

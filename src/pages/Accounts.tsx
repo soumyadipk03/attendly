@@ -117,7 +117,7 @@ export function Accounts({ app }: { app: DatasetController }) {
 
       <p className="mt-3 text-xs text-slate-500">
         The dataset loads by itself when Attendly opens, so there is no Load button. Attendance lives one month deep, at{' '}
-        <span className="font-mono">data/attendance/class/&lt;class&gt;/&lt;YYYY-MM&gt;/ddmmyy_tttttt_attendance.csv</span>.
+        <span className="font-mono">data/attendance/&lt;class&gt;/&lt;YYYY-MM&gt;/ddmmyy_tttttt_attendance.csv</span>.
         When a class has two month folders, the older one is offered for squashing into a single{' '}
         <span className="font-mono">&lt;YYYY-MM&gt;.csv</span> of classes attended over classes held. Reset dataset
         writes the sample classes {MOCK_CLASS_NAMES.join(' and ')}.
