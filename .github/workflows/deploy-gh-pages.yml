@@ -17,11 +17,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      VITE_HF_CSV_URL: https://huggingface.co/datasets/soumyadipk03/attendly/resolve/main/students.csv
-      VITE_HF_REPO: soumyadipk03/attendly
-      HF_API: ${{ secrets.HF_API }}
-      HF_REPO: soumyadipk03/attendly
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
