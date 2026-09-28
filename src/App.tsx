@@ -6,6 +6,7 @@ import { Accounts } from './pages/Accounts'
 import { ShowAttendance } from './pages/ShowAttendance'
 import { Students } from './pages/Students'
 import { TakeAttendance } from './pages/TakeAttendance'
+import { Login } from './pages/Login'
 
 const NAV_ITEMS = [
   { id: 'attendance', label: 'Take Attendance' },
@@ -20,6 +21,12 @@ export default function App() {
   const app = useDataset()
   const [currentPage, setCurrentPage] = useState<PageId>('attendance')
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
+
+  // If there is no HF token stored, show a login screen and hide the entire
+  // app shell until the user has been verified.
+  if (!app.token) {
+    return <Login app={app} />
+  }
 
   const goTo = (page: PageId) => {
     setCurrentPage(page)

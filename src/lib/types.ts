@@ -6,34 +6,34 @@ export type Student = {
   course: string
 }
 
-export type AttendanceEntry = {
+/** One student's mark for one session, as stored in a month's rows. */
+export type MonthRow = {
   rollNumber: string
   name: string
   course: string
-  status: AttendanceStatus
+  /** The day the session ran, as YYYY-MM-DD. */
+  date: string
   /** User-defined slot for the whole session, e.g. "09:05 to 09:30". */
   slot: string
-  note: string
+  status: AttendanceStatus
+  /** Running count of sessions this student attended that month. */
+  classesAttended: number
+  /** Distinct sessions held that month, identical on every row. */
+  classesHeld: number
 }
 
-export type AttendanceSession = {
-  fileName: string
-  path: string
-  stamp: string
-  date: string
-  time: string
+/** One <month>.csv: every session logged for a class in that month. */
+export type MonthRecord = {
+  className: string
   month: string
-  entries: AttendanceEntry[]
+  path: string
+  rows: MonthRow[]
 }
 
 export type ClassData = {
   className: string
   roster: Student[]
-  sessions: AttendanceSession[]
-  /** Completed months held as a single summary file instead of daily files. */
-  squashedMonths: SquashedMonth[]
-  /** Past months still held as daily files, waiting to be squashed. */
-  squashCandidates: SquashCandidate[]
+  months: MonthRecord[]
 }
 
 export type DatasetSnapshot = Record<string, ClassData>
@@ -47,34 +47,18 @@ export type StudentStat = {
   percentage: number
 }
 
-/** A completed month stored as one <month>.csv of per-student totals. */
-export type SquashedMonth = {
-  className: string
-  month: string
-  path: string
-  stats: StudentStat[]
-  classesHeld: number
-}
-
 export type ClassReport = {
   className: string
   mode: RangeMode
   month: string
-  sessions: AttendanceSession[]
-  squashedMonths: SquashedMonth[]
-  months: string[]
+  months: MonthRecord[]
+  monthNames: string[]
   stats: StudentStat[]
   classesHeld: number
   averagePercentage: number
 }
 
 export type AttendanceDraft = Record<string, AttendanceStatus>
-
-export type SquashCandidate = {
-  className: string
-  month: string
-  dailyPaths: string[]
-}
 
 export type HfAccount = {
   name: string

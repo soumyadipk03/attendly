@@ -8,26 +8,14 @@ import { HubApiError } from '@huggingface/hub'
 import {
   ATTENDANCE_ROOT,
   STUDENTS_ROOT,
+  attendanceMonthOf,
   classNameOf,
-  fileNameOf,
   isAttendancePath,
   isRosterPath,
-  isSquashedPath,
-  parseAttendanceFileName,
   sortByName,
-  squashedMonthOf,
 } from './datasetLayout'
-import { parseAttendanceCsv, parseRosterCsv, parseSquashedCsv, sortStudents } from './records'
-import { findSquashCandidates, percentageOf } from './squash'
-import type {
-  AttendanceSession,
-  ClassData,
-  DatasetSnapshot,
-  HfAccount,
-  Student,
-  SquashedMonth,
-  UploadFile,
-} from './types'
+import { parseMonthCsv, parseRosterCsv, sortStudents, withRecountedTotals } from './records'
+import type { ClassData, DatasetSnapshot, HfAccount, MonthRecord, UploadFile } from './types'
 
 export type HfRepo = { type: 'dataset'; name: string }
 
@@ -189,43 +177,15 @@ async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, work
   return results
 }
 
-async function loadSessions(repo: HfRepo, token: string, paths: readonly string[]): Promise<AttendanceSession[]> {
-  const parsed = await mapWithConcurrency(paths, 6, async (path) => {
-    const meta = parseAttendanceFileName(fileNameOf(path))
-    if (!meta) {
-      return null
-    }
-
-    const text = await readText(repo, token, path)
-    if (!text) {
-      return null
-    }
-
-    return {
-      fileName: fileNameOf(path),
-      path,
-      stamp: meta.stamp,
-      date: meta.date,
-      time: meta.time,
-      month: meta.month,
-      entries: parseAttendanceCsv(text),
-    } satisfies AttendanceSession
-  })
-
-  return parsed.filter((session): session is AttendanceSession => session !== null)
-}
-
-/** Reads a <month>.csv summary back into per-student totals. */
-async function loadSquashedMonths(
+/** Reads each <month>.csv back, recounting the running totals from the rows. */
+async function loadMonths(
   repo: HfRepo,
   token: string,
   className: string,
   paths: readonly string[],
-  roster: readonly Student[],
-): Promise<SquashedMonth[]> {
-  const byRoll = new Map(roster.map((student) => [student.rollNumber, student]))
-  const loaded = await mapWithConcurrency(paths, 4, async (path) => {
-    const month = squashedMonthOf(fileNameOf(path))
+): Promise<MonthRecord[]> {
+  const loaded = await mapWithConcurrency(paths, 6, async (path) => {
+    const month = attendanceMonthOf(path)
     if (!month) {
       return null
     }
@@ -233,42 +193,25 @@ async function loadSquashedMonths(
     if (!text) {
       return null
     }
-
-    const stats = parseSquashedCsv(text).map((row) => {
-      // Prefer the roster's name and course so a later roster edit still wins.
-      const student = byRoll.get(row.rollNumber) ?? {
-        rollNumber: row.rollNumber,
-        name: row.name,
-        course: row.course,
-      }
-      return {
-        student,
-        attended: row.attended,
-        held: row.held,
-        percentage: percentageOf(row.attended, row.held),
-      }
-    })
-
-    const classesHeld = stats.reduce((most, stat) => Math.max(most, stat.held), 0)
-    return { className, month, path, stats, classesHeld } satisfies SquashedMonth
+    return { className, month, path, rows: withRecountedTotals(parseMonthCsv(text)) } satisfies MonthRecord
   })
 
-  return loaded.filter((month): month is SquashedMonth => month !== null).sort((a, b) => a.month.localeCompare(b.month))
+  return loaded
+    .filter((record): record is MonthRecord => record !== null)
+    .sort((a, b) => a.month.localeCompare(b.month))
 }
 
 /**
- * Reads one <month>.csv straight back. The squash flow calls this before deleting
- * anything, so a summary is only ever accepted once it is proven readable.
+ * Reads one <month>.csv straight back. Submit calls this before overwriting, so
+ * existing rows are never lost to a blind write.
  */
-export async function readSquashedMonth(
+export async function readMonth(
   repo: HfRepo,
   token: string,
-  className: string,
   path: string,
-  roster: readonly Student[] = [],
-): Promise<SquashedMonth | null> {
-  const [month] = await loadSquashedMonths(repo, token, className, [path], roster)
-  return month ?? null
+): Promise<MonthRecord | null> {
+  const [record] = await loadMonths(repo, token, '', [path])
+  return record ?? null
 }
 
 export async function deleteFilesIn(
@@ -323,47 +266,20 @@ export async function loadDataset(
     const classAttendancePaths = attendancePaths.filter(
       (path) => isAttendancePath(path) && classNameOf(path) === className,
     )
-    const squashedPaths = classAttendancePaths.filter((path) => isSquashedPath(path))
+    const months = await loadMonths(repo, token, className, classAttendancePaths)
 
-    const [sessions, squashedMonths] = await Promise.all([
-      loadSessions(repo, token, classAttendancePaths.filter((path) => !isSquashedPath(path))),
-      loadSquashedMonths(repo, token, className, squashedPaths, roster),
-    ])
-
-    // If a month has both a <month>.csv and daily files, the summary wins.
-    // Counting both would report the same classes held twice.
-    const squashedMonthsSet = new Set(squashedMonths.map((month) => month.month))
-    const counted = sessions.filter((session) => !squashedMonthsSet.has(session.month))
-
-    const data: ClassData = {
-      className,
-      roster,
-      sessions: counted.sort((a, b) => a.stamp.localeCompare(b.stamp)),
-      squashedMonths,
-      squashCandidates: [],
-    }
+    const data: ClassData = { className, roster, months }
 
     snapshot[className] = data
 
     done += 1
     const share = classNames.length === 0 ? 70 : (done / classNames.length) * 70
-    const held = counted.length + squashedMonths.length
-    onProgress(20 + share, `Loaded ${className} (${held} month${held === 1 ? '' : 's'})`)
+    onProgress(20 + share, `Loaded ${className} (${months.length} month${months.length === 1 ? '' : 's'})`)
   })
 
   onProgress(100, 'Dataset ready.')
 
-  const ordered = Object.fromEntries(
+  return Object.fromEntries(
     sortByName(Object.keys(snapshot)).map((className) => [className, snapshot[className]]),
   )
-
-  // Past months still sitting as daily files get offered for squashing.
-  for (const candidate of findSquashCandidates(ordered)) {
-    const classData = ordered[candidate.className]
-    if (classData) {
-      classData.squashCandidates = [...classData.squashCandidates, candidate]
-    }
-  }
-
-  return ordered
 }

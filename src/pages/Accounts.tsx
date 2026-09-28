@@ -1,4 +1,4 @@
-import { Combine, Database, Eye, EyeOff, KeyRound, ShieldCheck, Sprout, Trash2 } from 'lucide-react'
+import { Database, Eye, EyeOff, KeyRound, ShieldCheck, Sprout, Trash2 } from 'lucide-react'
 import { GhostButton, PageHeading, Panel, StatCard } from '../components/ui'
 import type { DatasetController } from '../hooks/useDataset'
 import { repoIdFor } from '../lib/hfDataset'
@@ -17,10 +17,6 @@ export function Accounts({ app }: { app: DatasetController }) {
     snapshot,
     isVerifying,
     isSeeding,
-    isSquashing,
-    isWriting,
-    squashCandidates,
-    confirmSquash,
     verifyToken,
     seedDataset,
   } = app
@@ -28,7 +24,7 @@ export function Accounts({ app }: { app: DatasetController }) {
   const [showToken, setShowToken] = useState(false)
   const targetRepo = account ? repoIdFor(account.name, repoName) : `<your-hf-username>/${repoName}`
   const loadedClasses = Object.keys(snapshot).length
-  const loadedSessions = Object.values(snapshot).reduce((total, entry) => total + entry.sessions.length, 0)
+  const loadedMonths = Object.values(snapshot).reduce((total, entry) => total + entry.months.length, 0)
 
   const confirmSeed = () => {
     app.setModal({
@@ -87,15 +83,10 @@ export function Accounts({ app }: { app: DatasetController }) {
       </label>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <GhostButton onClick={verifyToken} disabled={isVerifying}>
-          <KeyRound className="h-4 w-4" />
-          {isVerifying ? 'Verifying...' : 'Verify HF token'}
-        </GhostButton>
-
-        {squashCandidates.length > 0 ? (
-          <GhostButton onClick={confirmSquash} disabled={isSquashing || isWriting}>
-            <Combine className="h-4 w-4" />
-            {isSquashing ? 'Squashing...' : `Squash ${squashCandidates.length} finished month(s)`}
+        {!token.trim() ? (
+          <GhostButton onClick={verifyToken} disabled={isVerifying}>
+            <KeyRound className="h-4 w-4" />
+            {isVerifying ? 'Verifying...' : 'Verify HF token'}
           </GhostButton>
         ) : null}
 
@@ -115,12 +106,11 @@ export function Accounts({ app }: { app: DatasetController }) {
         </GhostButton>
       </div>
 
-      <p className="mt-3 text-xs text-slate-500">
-        The dataset loads by itself when Attendly opens, so there is no Load button. Attendance lives one month deep, at{' '}
-        <span className="font-mono">data/attendance/&lt;class&gt;/&lt;YYYY-MM&gt;/ddmmyy_tttttt_attendance.csv</span>.
-        When a class has two month folders, the older one is offered for squashing into a single{' '}
-        <span className="font-mono">&lt;YYYY-MM&gt;.csv</span> of classes attended over classes held. Reset dataset
-        writes the sample classes {MOCK_CLASS_NAMES.join(' and ')}.
+<p className="mt-3 text-xs text-slate-500">
+        The dataset loads by itself when Attendly opens, so there is no Load button. Each class has one
+        <span className="font-mono">data/attendance/{'<'}{'class'}{'>'}/{'<'}{'YYYY-MM'}{'>'}.csv</span> that accumulates
+        every session. The report counts distinct date+slot pairs as classes held.
+        Reset dataset writes the sample classes {MOCK_CLASS_NAMES.join(' and ')}.
       </p>
 
       {account ? (
@@ -137,7 +127,7 @@ export function Accounts({ app }: { app: DatasetController }) {
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard label="Classes cached" value={String(loadedClasses)} hint="from the dataset" />
-        <StatCard label="Attendance files" value={String(loadedSessions)} hint="pulled from the dataset" />
+        <StatCard label="Month files" value={String(loadedMonths)} hint="in the dataset" />
         <StatCard
           label="Data source"
           value="Hugging Face"

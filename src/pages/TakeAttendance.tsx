@@ -2,7 +2,7 @@ import { CalendarDays, CheckCircle2, Clock3, UploadCloud, XCircle } from 'lucide
 import { ClassPicker } from '../components/ClassPicker'
 import { EmptyState, Field, GhostButton, PageHeading, Panel, PrimaryButton, StatCard } from '../components/ui'
 import type { DatasetController } from '../hooks/useDataset'
-import { buildAttendanceFileName, attendancePath } from '../lib/datasetLayout'
+import { attendancePath } from '../lib/datasetLayout'
 
 export function TakeAttendance({ app }: { app: DatasetController }) {
   const {
@@ -27,7 +27,6 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
     submitAttendance,
   } = app
 
-  const fileName = buildAttendanceFileName(sessionDate, slotStart)
   const presentCount = roster.filter((student) => draft[student.rollNumber] === 'present').length
 
   return (
@@ -97,7 +96,7 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 shadow-sm">
             <span className="font-mono text-[11px] text-slate-500">
-              {attendancePath(activeClassName, sessionDate.slice(0, 7), fileName)}
+              {attendancePath(activeClassName, sessionDate.slice(0, 7))}
               {slotRange ? ` · slot "${slotRange}"` : ''}
             </span>
             <div className="flex gap-2">
@@ -172,11 +171,11 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              Each file equals one class held, so the report counts files.
+              One {"<month>.csv"} per class; each submit appends a row per student.
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <XCircle className="h-4 w-4 text-rose-500" />
-              Re-submitting the same date and slot start replaces that session.
+              Same date and slot appends a new session to that month.
             </div>
           </div>
         </>

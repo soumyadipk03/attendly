@@ -1,23 +1,13 @@
 import {
-  ATTENDANCE_FILE_SUFFIX,
   ATTENDANCE_ROOT,
   ROSTER_FILE_NAME,
   STUDENTS_ROOT,
   attendancePath,
-  buildAttendanceFileName,
   rosterPath,
   toIsoDate,
 } from './datasetLayout'
-import { ATTENDANCE_HEADER, ROSTER_HEADER, SQUASHED_HEADER, toAttendanceCsv, toRosterCsv } from './records'
-import type { AttendanceEntry, Student, UploadFile } from './types'
-
-/**
- * Seed-only fixture. This is the single place in the project where sample
- * rosters exist, and it is reachable only from the "Reset dataset"
- * action, which writes the files into the Hugging Face dataset. It is never
- * used as a runtime data source: every student the UI renders is pulled from
- * the dataset.
- */
+import { MONTH_HEADER, ROSTER_HEADER, toMonthCsv, toRosterCsv } from './records'
+import type { MonthRow, Student, UploadFile } from './types'
 
 const SEED_CLASSES: Array<{ className: string; students: Array<[string, string, string]> }> = [
   {
@@ -50,7 +40,6 @@ const SESSION_SLOTS = [
   '12:00 to 12:45',
   '14:30 to 15:30',
 ] as const
-const TOPICS = ['Lecture', 'Revision', 'Doubt clearing', 'Lab']
 const SESSIONS_PER_MONTH = SESSION_SLOTS.length
 const MONTHS_OF_HISTORY = 3
 
@@ -63,7 +52,6 @@ function pseudoRandom(seed: number): number {
   return value - Math.floor(value)
 }
 
-/** One entry per session, carrying the numeric month folder it belongs in. */
 function sessionDates(today: Date): Array<{ date: string; month: string }> {
   const dates: Array<{ date: string; month: string }> = []
 
@@ -86,20 +74,34 @@ function buildRoster(definition: (typeof SEED_CLASSES)[number]): Student[] {
   return definition.students.map(([name, rollNumber, course]) => ({ name, rollNumber, course }))
 }
 
-function buildEntries(
-  students: readonly Student[],
-  seed: number,
-  slot: string,
-  note: string,
-): AttendanceEntry[] {
-  return students.map((student, index) => ({
-    rollNumber: student.rollNumber,
-    name: student.name,
-    course: student.course,
-    status: pseudoRandom(seed * 17 + index * 7) > 0.22 ? 'present' : 'absent',
-    slot,
-    note,
-  }))
+function buildMonthRows(
+  roster: readonly Student[],
+  dates: { date: string; month: string }[],
+  classIndex: number,
+): MonthRow[] {
+  const rows: MonthRow[] = []
+
+  for (const { date, month } of dates) {
+    const sessionIndex = dates.findIndex((d) => d.date === date && d.month === month)
+    const slot = SESSION_SLOTS[sessionIndex % SESSION_SLOTS.length]
+    const seed = classIndex * 1000 + sessionIndex + 1
+
+    for (const student of roster) {
+      const isPresent = pseudoRandom(seed * 17 + roster.findIndex((s) => s.rollNumber === student.rollNumber) * 7) > 0.22
+      rows.push({
+        rollNumber: student.rollNumber,
+        name: student.name,
+        course: student.course,
+        date,
+        slot,
+        status: isPresent ? 'present' : 'absent',
+        classesAttended: 0,
+        classesHeld: 0,
+      })
+    }
+  }
+
+  return rows
 }
 
 export function buildDatasetReadme(): string {
@@ -122,20 +124,14 @@ attendance session for the authenticated Hugging Face account.
 
 \`\`\`
 ${STUDENTS_ROOT}/<class>/${ROSTER_FILE_NAME}
-${ATTENDANCE_ROOT}/<class>/<YYYY-MM>/<ddmmyy>_<tttttt>${ATTENDANCE_FILE_SUFFIX}
+${ATTENDANCE_ROOT}/<class>/<YYYY-MM>.csv
 \`\`\`
 
-- Month folders are numeric, \`YYYY-MM\`, never a month name.
+- Month files are numeric, \`YYYY-MM\`, never a month name.
 - \`${ROSTER_FILE_NAME}\` columns: ${ROSTER_HEADER.join(', ')}
-- Attendance file columns: ${ATTENDANCE_HEADER.join(', ')}
-- One attendance file equals one class held. The filename carries the session
-  date (\`ddmmyy\`) and slot start time (\`tttttt\`), while the \`slot\` column
-  keeps the full user-defined range, for example \`09:05 to 09:30\`.
-- Once a class has two month folders, the older one is squashed into a single
-  \`<class>/<YYYY-MM>.csv\` summary with columns ${SQUASHED_HEADER.join(', ')}
-  holding each student's classes attended over classes held. The daily files in
-  that month folder are then removed, and the summary takes their place in the
-  report.
+- Month file columns: ${MONTH_HEADER.join(', ')}
+- Each row is one student's mark for one session (date + slot). The report
+  counts distinct date+slot pairs as classes held.
 `
 }
 
@@ -151,17 +147,22 @@ export function buildMockSeedFiles(now = new Date()): UploadFile[] {
       content: new Blob([toRosterCsv(roster)], { type: 'text/csv;charset=utf-8' }),
     })
 
-    dates.forEach(({ date, month }, sessionIndex) => {
-      const slot = SESSION_SLOTS[sessionIndex % SESSION_SLOTS.length]
-      const fileName = buildAttendanceFileName(date, slot.split(' to ')[0])
-      const note = TOPICS[(classIndex + sessionIndex) % TOPICS.length]
-      const entries = buildEntries(roster, classIndex * 1000 + sessionIndex + 1, slot, note)
+    const monthRows = buildMonthRows(roster, dates, classIndex)
 
+    const byMonth = new Map<string, MonthRow[]>()
+    for (const row of monthRows) {
+      const month = row.date.slice(0, 7)
+      const bucket = byMonth.get(month)
+      if (bucket) bucket.push(row)
+      else byMonth.set(month, [row])
+    }
+
+    for (const [month, rows] of byMonth) {
       files.push({
-        path: attendancePath(definition.className, month, fileName),
-        content: new Blob([toAttendanceCsv(entries)], { type: 'text/csv;charset=utf-8' }),
+        path: attendancePath(definition.className, month),
+        content: new Blob([toMonthCsv(rows)], { type: 'text/csv;charset=utf-8' }),
       })
-    })
+    }
   })
 
   return files
