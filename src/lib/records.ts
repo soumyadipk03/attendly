@@ -165,3 +165,70 @@ export function groupSessions(rows: readonly MonthRow[]): MonthRow[][] {
     (a[0]?.slot ?? '').localeCompare(b[0]?.slot ?? ''),
   )
 }
+
+/**
+ * Folds a fresh submit into a month's rows, where the incoming rows are all for
+ * the one session identified by their own date and slot.
+ *
+ * The rules, in order of importance:
+ *
+ * - **Present is never taken away.** Re-submitting a session that was already
+ *   recorded can correct an absence into a presence, but never downgrades a
+ *   presence. A present that was recorded by mistake has to be removed from the
+ *   dataset by hand, because silently forgetting a class someone attended is the
+ *   worse failure of the two.
+ * - **The union is kept.** A student already in the session but missing from the
+ *   payload keeps their recorded row, and a student new to the session is added.
+ *   Merging never drops anybody.
+ * - **Everything else is untouched.** Rows for other sessions are copied through
+ *   as they were, so merging one session cannot disturb the rest of the month.
+ */
+export function mergeAttendanceRows(
+  existing: readonly MonthRow[],
+  incoming: readonly MonthRow[],
+): MonthRow[] {
+  if (incoming.length === 0) {
+    return [...existing]
+  }
+
+  const first = incoming[0]
+  const target = sessionKey(first.date, first.slot)
+
+  const others = existing.filter((row) => sessionKey(row.date, row.slot) !== target)
+
+  // Collapse anything already recorded for this session to one row per student,
+  // keeping a present if the same student somehow has more than one row.
+  const prior = new Map<string, MonthRow>()
+  for (const row of existing) {
+    if (sessionKey(row.date, row.slot) !== target) {
+      continue
+    }
+    const current = prior.get(row.rollNumber)
+    if (!current || (current.status !== 'present' && row.status === 'present')) {
+      prior.set(row.rollNumber, row)
+    }
+  }
+
+  const incomingByRoll = new Map(incoming.map((row) => [row.rollNumber, row]))
+  const merged = new Map<string, MonthRow>()
+
+  // Payload order first, so the session reads in the same roster order the
+  // teacher just saw on screen.
+  for (const row of incoming) {
+    const before = prior.get(row.rollNumber)
+    const staysPresent = before?.status === 'present'
+    merged.set(row.rollNumber, {
+      ...row,
+      status: staysPresent || row.status === 'present' ? 'present' : 'absent',
+    })
+  }
+
+  // Then anyone already recorded for this session who was not in the payload.
+  for (const [rollNumber, row] of prior) {
+    if (!incomingByRoll.has(rollNumber)) {
+      merged.set(rollNumber, row)
+    }
+  }
+
+  return [...others, ...merged.values()]
+}

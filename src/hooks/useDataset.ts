@@ -11,21 +11,25 @@ import {
   resolveAccount,
   uploadFiles,
 } from '../lib/hfDataset'
+import type { HfRepo } from '../lib/hfDataset'
 import {
   attendancePath,
   defaultSlotRange,
   formatSlotRange,
   isSlotRangeValid,
   isValidClassName,
+  parseDateDigits,
   rosterPath,
+  sanitizeDateDigits,
   sortByName,
 } from '../lib/datasetLayout'
 import { buildMockSeedFiles } from '../lib/mockSeed'
-import { ROSTER_HEADER, parseRosterCsv, toMonthCsv, withRecountedTotals } from '../lib/records'
+import { ROSTER_HEADER, mergeAttendanceRows, parseRosterCsv, toMonthCsv, withRecountedTotals } from '../lib/records'
 import { buildReport, emptyReport, listMonths } from '../lib/report'
 import type {
   AttendanceDraft,
   AttendanceStatus,
+  AuthStatus,
   ClassReport,
   DatasetSnapshot,
   HfAccount,
@@ -53,56 +57,17 @@ function readStored(key: string): string {
   return window.localStorage.getItem(key) ?? ''
 }
 
-const VERIFIED_CACHE_KEY = 'attendly-verified-cache'
-
-interface VerifiedCache {
-  token: string
-  account: HfAccount
-  verified: boolean
-}
-
-function getVerifiedCache(): VerifiedCache | null {
-  if (typeof window === 'undefined') {
-    return null
-  }
-  try {
-    const raw = window.localStorage.getItem(VERIFIED_CACHE_KEY)
-    if (!raw) {
-      return null
-    }
-    const parsed = JSON.parse(raw)
-    if (parsed?.token && parsed?.account && parsed.verified === true) {
-      return parsed as VerifiedCache
-    }
-    return null
-  } catch {
-    return null
-  }
-}
-
-function setVerifiedCache(cache: VerifiedCache): void {
-  if (typeof window === 'undefined') {
-    return
-  }
-  window.localStorage.setItem(VERIFIED_CACHE_KEY, JSON.stringify(cache))
-}
-
-function clearVerifiedCache(): void {
-  if (typeof window === 'undefined') {
-    return
-  }
-  window.localStorage.removeItem(VERIFIED_CACHE_KEY)
-}
-
 const EMPTY_SNAPSHOT: DatasetSnapshot = {}
 
 export function useDataset() {
-  // Token is read from localStorage but the app stays locked until verified.
-  // isVerified is the ONLY gate - nothing renders until this is true.
+  // A stored token is treated as unproven until it is verified again, so the
+  // app shell stays hidden behind the login gate on every reload.
   const [token, setTokenState] = useState(() => readStored(STORAGE_KEYS.token))
   const [repoName, setRepoNameState] = useState(() => readStored(STORAGE_KEYS.repo) || DEFAULT_REPO_NAME)
   const [account, setAccount] = useState<HfAccount | null>(null)
-  const [isVerified, setIsVerified] = useState(false)
+  // Auth is a state machine, not a boolean. 'signed-out' and 'checking' must
+  // both keep the app shell hidden; the two success states decide the role.
+  const [authStatus, setAuthStatus] = useState<AuthStatus>('signed-out')
   const [snapshot, setSnapshot] = useState<DatasetSnapshot>(EMPTY_SNAPSHOT)
   const [status, setStatus] = useState('Enter your Hugging Face API token to continue.')
   const [isVerifying, setIsVerifying] = useState(false)
@@ -114,6 +79,24 @@ export function useDataset() {
 
   // Any Hugging Face write in flight. Used to warn before the tab is closed.
   const isWriting = isSeeding || isSubmitting || isUploadingRoster
+
+  // Derived from the state machine so the gate and the role can never disagree.
+  const isVerified = authStatus === 'teacher' || authStatus === 'student'
+  const canWrite = authStatus === 'teacher'
+  const isChecking = authStatus === 'checking'
+
+  // Tracks which role already triggered a dataset load, so signing in loads
+  // exactly once and the read-only probe can hand its result straight over.
+  const loadedForRef = useRef<AuthStatus | null>(null)
+
+  // Every write path checks this. Hiding a button is not authorization.
+  const requireWriteAccess = useCallback((): boolean => {
+    if (authStatus === 'teacher') {
+      return true
+    }
+    setStatus('This account is read-only. Attendance cannot be modified.')
+    return false
+  }, [authStatus])
 
   useEffect(() => {
     if (!isWriting) {
@@ -134,8 +117,13 @@ export function useDataset() {
   const [rangeMonth, setRangeMonthState] = useState(() => readStored(STORAGE_KEYS.rangeMonth))
 
   // Date and slot both start empty: a session is logged deliberately, and a
-  // pre-filled time would be a guess at when the class actually ran.
-  const [sessionDate, setSessionDate] = useState('')
+  // pre-filled time would be a guess at when the class actually ran. The date is
+  // typed as ddmmyyyy and is converted to the ISO yyyy-mm-dd the dataset stores,
+  // so month folders and chronological sorting keep working unchanged.
+  const [sessionDateDigits, setSessionDateDigits] = useState('')
+  const sessionDate = useMemo(() => parseDateDigits(sessionDateDigits) ?? '', [sessionDateDigits])
+  const sessionDateIsValid = sessionDate.length > 0
+  const setSessionDate = useCallback((next: string) => setSessionDateDigits(sanitizeDateDigits(next)), [])
   const [slot, setSlot] = useState(defaultSlotRange)
   const slotStart = slot.start
   const slotEnd = slot.end
@@ -176,13 +164,18 @@ export function useDataset() {
     [draft, roster],
   )
 
+  // Editing the token always invalidates the current session: a token that has
+  // not been verified yet must not inherit the previous token's role.
   const setToken = useCallback((next: string) => {
     setTokenState(next)
+    setAuthStatus('signed-out')
+    setAccount(null)
+    setSnapshot(EMPTY_SNAPSHOT)
+    loadedForRef.current = null
     if (next.trim()) {
       window.localStorage.setItem(STORAGE_KEYS.token, next)
     } else {
       window.localStorage.removeItem(STORAGE_KEYS.token)
-      setAccount(null)
     }
   }, [])
 
@@ -202,8 +195,8 @@ export function useDataset() {
   const clearToken = useCallback(() => {
     setTokenState('')
     setAccount(null)
-    setIsVerified(false)
-    clearVerifiedCache()
+    setAuthStatus('signed-out')
+    loadedForRef.current = null
     window.localStorage.removeItem(STORAGE_KEYS.token)
     setStatus('Hugging Face token cleared from this browser. Cached dataset data was dropped too.')
     setSnapshot(EMPTY_SNAPSHOT)
@@ -251,103 +244,122 @@ export function useDataset() {
     }
   }, [repoName, requireAccount, token])
 
-  // Declared after pullDataset because the dependency array below reads it.
-  const verifyToken = useCallback(async () => {
-    if (!token.trim()) {
-      setAccount(null)
-      setIsVerified(false)
-      clearVerifiedCache()
-      const message = 'Paste a Hugging Face API token before verifying it.'
-      setStatus(message)
-      setModal({ type: 'success', title: 'No token to verify', message, confirmText: 'Dismiss' })
-      return
-    }
-
-    // Skip re-verification if token hasn't changed and we already verified it this session.
-    const cached = getVerifiedCache()
-    if (cached?.token === token && cached.verified) {
-      const resolved = cached.account
-      setAccount(resolved)
-      setIsVerified(true)
-      setStatus(`Restored verified session for ${resolved.name}. Loading dataset...`)
-      void pullDataset()
-      return
-    }
-
-    setIsVerifying(true)
+  // Proves write access without touching the main dataset: a throwaway repo is
+  // created and then deleted, so the dataset history stays clean. The repo is
+  // removed in `finally` so a failed delete cannot silently leak it.
+  const probeWriteAccess = useCallback(async (username: string, candidate: string): Promise<boolean> => {
+    const probeRepo: HfRepo = { type: 'dataset', name: `${username}/attendly-access-probe-${Date.now()}` }
+    let created = false
     try {
-      const resolved = await resolveAccount(token)
+      await createRepo({ repo: probeRepo, accessToken: candidate, visibility: 'private' })
+      created = true
+      return true
+    } catch {
+      // Creation refused: either the token cannot write, or the network/HF
+      // service failed. Both are treated as "not proven to be a writer", and
+      // the caller falls back to confirming read access before trusting it.
+      return false
+    } finally {
+      if (created) {
+        try {
+          await deleteRepo({ repo: probeRepo, accessToken: candidate })
+        } catch {
+          setStatus(
+            `Could not delete the temporary access-check repo ${probeRepo.name}. Remove it manually on Hugging Face.`,
+          )
+        }
+      }
+    }
+  }, [])
 
-      // Check write access by creating and deleting a temporary test repo.
-      // This avoids any commits to the main attendly-data repo.
-      const testRepoName = `attendly-verify-${Date.now()}`
-      const testRepo = { type: 'dataset' as const, name: `${resolved.name}/${testRepoName}` }
+  // `candidate` is passed in explicitly instead of read from the closure. The
+  // login form sets the token and verifies it in the same event, so the state
+  // value is still stale when a closure-based verify runs.
+  const verifyToken = useCallback(
+    async (candidate?: string) => {
+      const attempt = (candidate ?? token).trim()
 
-      await createRepo({ repo: testRepo, accessToken: token, visibility: 'private' })
-      await deleteRepo({ repo: testRepo, accessToken: token })
+      if (!attempt) {
+        setAuthStatus('signed-out')
+        setStatus('Paste a Hugging Face API token before verifying it.')
+        return
+      }
 
-      // Write succeeded -> token has write access. Cache it.
-      setVerifiedCache({ token, account: resolved, verified: true })
-      setAccount(resolved)
-      setIsVerified(true)
-      setStatus(`Verified write access for ${resolved.name}. Loading dataset...`)
-      void pullDataset()
-    } catch (error) {
-      // If repo creation/deletion fails, fall back to read-only mode
-      // (token may have read access but not write)
+      setIsVerifying(true)
+      // 'checking' keeps the app shell hidden while the round-trip to Hugging
+      // Face happens, and returns to the login screen if it fails.
+      setAuthStatus('checking')
+      setModal(null)
+      setStatus('Checking the token with Hugging Face...')
+
       try {
-        const resolved = await resolveAccount(token)
+        const resolved = await resolveAccount(attempt)
+
         setAccount(resolved)
-        setIsVerified(true)
-        clearVerifiedCache() // don't cache read-only
-        setStatus(`Read-only access for ${resolved.name}. Loading dataset...`)
-        void pullDataset()
-      } catch {
+        setTokenState(attempt)
+        window.localStorage.setItem(STORAGE_KEYS.token, attempt)
+
+        const writable = await probeWriteAccess(resolved.name, attempt)
+
+        if (writable) {
+          setAuthStatus('teacher')
+          setStatus(`Verified teacher access for ${resolved.name}. Loading dataset...`)
+          return
+        }
+
+        // No write access. Only accept it as a read-only session if the dataset
+        // can actually be read, otherwise the token has no usable access. The
+        // read result is kept so the dataset is not fetched a second time.
+        try {
+          const loaded = await loadDataset(repoFor(resolved.name, repoName), attempt, () => undefined)
+          setSnapshot(loaded)
+          loadedForRef.current = 'student'
+          setAuthStatus('student')
+          setStatus(
+            `Verified read-only access for ${resolved.name}. Loaded ${Object.keys(loaded).length} class${
+              Object.keys(loaded).length === 1 ? '' : 'es'
+            }.`,
+          )
+        } catch (readError) {
+          setAuthStatus('signed-out')
+          setAccount(null)
+          window.localStorage.removeItem(STORAGE_KEYS.token)
+          setTokenState('')
+          const detail = readError instanceof Error ? readError.message : String(readError)
+          const message = `This token cannot read or write the dataset. ${detail}`
+          setStatus(message)
+          setModal({ type: 'success', title: 'Access denied', message, confirmText: 'Dismiss' })
+        }
+      } catch (error) {
+        setAuthStatus('signed-out')
         setAccount(null)
-        setIsVerified(false)
-        clearVerifiedCache()
+        window.localStorage.removeItem(STORAGE_KEYS.token)
+        setTokenState('')
         const message = `Verification failed: ${error instanceof Error ? error.message : String(error)}`
         setStatus(message)
         setModal({ type: 'success', title: 'Verification failed', message, confirmText: 'Dismiss' })
+      } finally {
+        setIsVerifying(false)
       }
-    } finally {
-      setIsVerifying(false)
-    }
-  }, [repoName, token])
+    },
+    [probeWriteAccess, repoName, token],
+  )
 
-  const autoLoadedRef = useRef(false)
-  const verifiedRestoredRef = useRef(false)
-
-  // Restore verified state from cache on mount. This runs once.
+  // The dataset loads once per successful sign-in. Both roles load it; only
+  // 'teacher' is allowed to write afterwards.
   useEffect(() => {
-    if (verifiedRestoredRef.current) {
+    if (!isVerified || loadedForRef.current === authStatus) {
       return
     }
-    verifiedRestoredRef.current = true
-    const cached = getVerifiedCache()
-    if (cached?.token === token && cached.verified) {
-      const resolved = cached.account
-      setAccount(resolved)
-      setIsVerified(true)
-      setStatus(`Restored verified session for ${resolved.name}. Loading dataset...`)
-      void pullDataset()
-    }
-  }, [token, pullDataset])
-
-  // The dataset loads ONLY after write access is verified. Runs once.
-  useEffect(() => {
-    if (autoLoadedRef.current) {
-      return
-    }
-    if (!isVerified) {
-      return
-    }
-    autoLoadedRef.current = true
+    loadedForRef.current = authStatus
     // oxlint-disable-next-line react/set-state-in-effect
     void pullDataset()
-  }, [pullDataset, isVerified])
+  }, [authStatus, isVerified, pullDataset])
 
   const seedDataset = useCallback(async () => {
+    if (!requireWriteAccess()) {
+      return
+    }
     setIsSeeding(true)
     setModal({
       type: 'progress',
@@ -408,9 +420,12 @@ export function useDataset() {
     } finally {
       setIsSeeding(false)
     }
-  }, [repoName, requireAccount, token])
+  }, [repoName, requireAccount, requireWriteAccess, token])
 
   const submitAttendance = useCallback(async () => {
+    if (!requireWriteAccess()) {
+      return
+    }
     if (!activeClassName) {
       setStatus('Select a class before submitting attendance.')
       return
@@ -419,8 +434,8 @@ export function useDataset() {
       setStatus('This class has no roster in the dataset, so there is nothing to submit.')
       return
     }
-    if (!sessionDate || !sessionDate.trim()) {
-      setStatus('Set a session date before submitting.')
+    if (!sessionDateIsValid) {
+      setStatus('Enter the session date as ddmmyyyy before submitting.')
       return
     }
     if (!slotIsValid) {
@@ -437,11 +452,11 @@ export function useDataset() {
       const repo = repoFor(resolved.name, repoName)
       await ensureRepo(repo, token)
 
-      // Read any existing month file so we append to it rather than overwrite.
+      // Read any existing month file so we merge into it rather than overwrite.
       const existing = await readMonth(repo, token, targetPath)
-      const existingRows = withRecountedTotals(existing?.rows ?? [])
+      const existingRows = existing?.rows ?? []
 
-      // One row per student, appended to the month log.
+      // One row per student for this date and slot.
       const newRows: MonthRow[] = roster.map((student) => ({
         rollNumber: student.rollNumber,
         name: student.name,
@@ -453,12 +468,28 @@ export function useDataset() {
         classesHeld: 0,
       }))
 
-      const allRows = withRecountedTotals([...existingRows, ...newRows])
+      // Submitting the same date and slot again folds into that session instead
+      // of stacking a duplicate: absences can become presences, and a presence is
+      // never taken away. Other sessions in the month are passed through as-is.
+      const merged = mergeAttendanceRows(existingRows, newRows)
+      const allRows = withRecountedTotals(merged)
+      const isResubmit = existingRows.some((row) => row.date === sessionDate && row.slot === slotRange)
+      const newlyPresent = isResubmit
+        ? newRows.filter(
+            (row) =>
+              row.status === 'present' &&
+              !existingRows.some(
+                (old) => old.rollNumber === row.rollNumber && old.date === sessionDate && old.slot === slotRange,
+              ),
+          ).length
+        : 0
 
       setModal({
         type: 'progress',
-        title: 'Uploading attendance',
-        message: `Appending ${roster.length} row${roster.length === 1 ? '' : 's'} to ${targetPath}. Do not close this tab.`,
+        title: isResubmit ? 'Updating session' : 'Uploading attendance',
+        message: isResubmit
+          ? `Merging ${roster.length} row${roster.length === 1 ? '' : 's'} into the existing ${sessionDate} ${slotRange} session in ${targetPath}. Do not close this tab.`
+          : `Adding ${roster.length} row${roster.length === 1 ? '' : 's'} to ${targetPath}. Do not close this tab.`,
         progress: 10,
         warning: CLOSE_WARNING,
       })
@@ -484,11 +515,15 @@ export function useDataset() {
 
       setModal({
         type: 'success',
-        title: 'Attendance submitted',
-        message: `${roster.length} row${roster.length === 1 ? '' : 's'} were pushed to ${targetPath} and the dataset was refreshed.`,
+        title: isResubmit ? 'Session updated' : 'Attendance submitted',
+        message: isResubmit
+          ? `The ${sessionDate} "${slotRange}" session in ${activeClassName} was merged${
+              newlyPresent > 0 ? `, adding ${newlyPresent} newly present student${newlyPresent === 1 ? '' : 's'}` : ''
+            }. Recorded presences were kept.`
+          : `${roster.length} row${roster.length === 1 ? '' : 's'} were pushed to ${targetPath} and the dataset was refreshed.`,
         confirmText: 'Continue',
       })
-      setStatus(`${activeClassName}'s month file updated.`)
+      setStatus(isResubmit ? `${activeClassName}: ${sessionDate} "${slotRange}" merged.` : `${activeClassName}'s month file updated.`)
       setDraft({})
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -496,7 +531,9 @@ export function useDataset() {
       setStatus(message)
     } finally {
       setIsSubmitting(false)
-      // Reset slot so the next submit starts fresh.
+      // Date and slot both start blank again: a session is logged deliberately,
+      // so nothing is pre-filled for the next one.
+      setSessionDate('')
       setSlot(defaultSlotRange)
     }
   }, [
@@ -504,12 +541,13 @@ export function useDataset() {
     activeDraft,
     repoName,
     requireAccount,
+    requireWriteAccess,
     roster,
     sessionDate,
-    sessionNote,
+    sessionDateIsValid,
+    setSessionDate,
     slotIsValid,
     slotRange,
-    slotStart,
     token,
   ])
 
@@ -577,6 +615,9 @@ export function useDataset() {
 
   const uploadRoster = useCallback(
     async (className: string, file: File) => {
+      if (!requireWriteAccess()) {
+        return
+      }
       const trimmed = className.trim()
       if (!isValidClassName(trimmed)) {
         const message =
@@ -624,7 +665,7 @@ export function useDataset() {
 
       void performRosterUpload()
     },
-    [classNames, performRosterUpload],
+    [classNames, performRosterUpload, requireWriteAccess],
   )
 
   const toggleDraft = useCallback((rollNumber: string) => {
@@ -662,7 +703,10 @@ export function useDataset() {
     rangeMonth: activeMonth,
     setRangeMonth,
     sessionDate,
+    sessionDateDigits,
+    sessionDateIsValid,
     setSessionDate,
+    setSessionDateDigits,
     slotStart,
     setSlotStart,
     slotEnd,
@@ -682,6 +726,10 @@ export function useDataset() {
     isSubmitting,
     isUploadingRoster,
     isWriting,
+    authStatus,
+    isVerified,
+    isChecking,
+    canWrite,
     verifyToken,
     seedDataset,
     submitAttendance,

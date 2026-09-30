@@ -67,6 +67,61 @@ export function toIsoDate(date: Date): string {
   return `${date.getFullYear()}-${twoDigit(date.getMonth() + 1)}-${twoDigit(date.getDate())}`
 }
 
+/**
+ * The date is typed as ddmmyyyy, the way it is written by hand, and it is typed
+ * in every time: like the slot, a session date is a deliberate choice rather than
+ * a guess, so nothing is pre-filled from the clock.
+ */
+export const DATE_DIGITS = 8
+
+/** Digits only, capped at 8, so the field cannot hold a half-typed month name. */
+export function sanitizeDateDigits(value: string): string {
+  return value.replace(/\D/g, '').slice(0, DATE_DIGITS)
+}
+
+/** "31082026" reads as "31/08/2026" while it is being typed. */
+export function formatDateForInput(digits: string): string {
+  const clean = sanitizeDateDigits(digits)
+  if (clean.length <= 2) {
+    return clean
+  }
+  if (clean.length <= 4) {
+    return `${clean.slice(0, 2)}/${clean.slice(2)}`
+  }
+  return `${clean.slice(0, 2)}/${clean.slice(2, 4)}/${clean.slice(4)}`
+}
+
+/**
+ * ddmmyyyy to the ISO yyyy-mm-dd the dataset stores. Returns null unless the
+ * digits form a real calendar date, so 31/02 is refused rather than rolled over
+ * into March and recorded against the wrong day.
+ */
+export function parseDateDigits(digits: string): string | null {
+  const clean = sanitizeDateDigits(digits)
+  if (clean.length !== DATE_DIGITS) {
+    return null
+  }
+
+  const day = Number(clean.slice(0, 2))
+  const month = Number(clean.slice(2, 4))
+  const year = Number(clean.slice(4, 8))
+
+  if (month < 1 || month > 12 || day < 1) {
+    return null
+  }
+
+  const candidate = new Date(year, month - 1, day)
+  const roundTrips =
+    candidate.getFullYear() === year && candidate.getMonth() === month - 1 && candidate.getDate() === day
+  return roundTrips ? toIsoDate(candidate) : null
+}
+
+/** yyyy-mm-dd back to ddmmyyyy for display. */
+export function formatDateDigits(iso: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim())
+  return match ? `${match[3]}${match[2]}${match[1]}` : ''
+}
+
 export function toClock(minutes: number): string {
   const wrapped = ((minutes % 1440) + 1440) % 1440
   return `${twoDigit(Math.floor(wrapped / 60))}:${twoDigit(wrapped % 60)}`

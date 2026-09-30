@@ -22,9 +22,21 @@ export function Accounts({ app }: { app: DatasetController }) {
   } = app
 
   const [showToken, setShowToken] = useState(false)
+  // Edited as a draft: changing the token invalidates the session, so the new
+  // value is only applied when it is re-verified.
+  const [tokenDraft, setTokenDraft] = useState(token)
   const targetRepo = account ? repoIdFor(account.name, repoName) : `<your-hf-username>/${repoName}`
   const loadedClasses = Object.keys(snapshot).length
   const loadedMonths = Object.values(snapshot).reduce((total, entry) => total + entry.months.length, 0)
+
+  const applyAndVerify = () => {
+    const attempt = tokenDraft.trim()
+    if (!attempt) {
+      return
+    }
+    setToken(attempt)
+    void verifyToken(attempt)
+  }
 
   const confirmSeed = () => {
     app.setModal({
@@ -52,8 +64,8 @@ export function Accounts({ app }: { app: DatasetController }) {
         <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
           <input
             type={showToken ? 'text' : 'password'}
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
+            value={tokenDraft}
+            onChange={(event) => setTokenDraft(event.target.value)}
             placeholder="hf_xxxxxxxxxxxxx"
             className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
           />
@@ -83,12 +95,10 @@ export function Accounts({ app }: { app: DatasetController }) {
       </label>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        {!token.trim() ? (
-          <GhostButton onClick={verifyToken} disabled={isVerifying}>
-            <KeyRound className="h-4 w-4" />
-            {isVerifying ? 'Verifying...' : 'Verify HF token'}
-          </GhostButton>
-        ) : null}
+        <GhostButton onClick={applyAndVerify} disabled={isVerifying || !tokenDraft.trim()}>
+          <KeyRound className="h-4 w-4" />
+          {isVerifying ? 'Verifying...' : 'Apply and re-verify token'}
+        </GhostButton>
 
         <button
           type="button"

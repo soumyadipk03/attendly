@@ -67,6 +67,13 @@ export type HfAccount = {
   orgs: string[]
 }
 
+/**
+ * Drives both the login gate and the role. 'signed-out' and 'checking' never
+ * render the app shell; 'teacher' and 'student' both render it, but only
+ * 'teacher' is allowed to write.
+ */
+export type AuthStatus = 'signed-out' | 'checking' | 'teacher' | 'student'
+
 export type ModalState = {
   type: 'progress' | 'success' | 'confirm'
   title: string

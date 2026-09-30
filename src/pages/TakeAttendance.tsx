@@ -2,7 +2,23 @@ import { CalendarDays, CheckCircle2, Clock3, UploadCloud, XCircle } from 'lucide
 import { ClassPicker } from '../components/ClassPicker'
 import { EmptyState, Field, GhostButton, PageHeading, Panel, PrimaryButton, StatCard } from '../components/ui'
 import type { DatasetController } from '../hooks/useDataset'
-import { attendancePath } from '../lib/datasetLayout'
+import { attendancePath, formatDateForInput, sanitizeDateDigits } from '../lib/datasetLayout'
+
+/** Says what is wrong with the typed date rather than just refusing it. */
+function dateHintFor(digits: string): string {
+  if (digits.length < 8) {
+    return `Type the full date — ${8 - digits.length} more digit${digits.length === 7 ? '' : 's'}`
+  }
+  const day = Number(digits.slice(0, 2))
+  const month = Number(digits.slice(2, 4))
+  if (month < 1 || month > 12) {
+    return 'That month does not exist — month must be 01 to 12'
+  }
+  if (day < 1) {
+    return 'Day must start at 01'
+  }
+  return `There is no ${digits.slice(0, 2)}/${digits.slice(2, 4)} in ${digits.slice(4, 8)}`
+}
 
 export function TakeAttendance({ app }: { app: DatasetController }) {
   const {
@@ -11,6 +27,8 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
     roster,
     draft,
     sessionDate,
+    sessionDateDigits,
+    sessionDateIsValid,
     slotStart,
     slotEnd,
     slotRange,
@@ -20,7 +38,7 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
     toggleDraft,
     markAll,
     selectClass,
-    setSessionDate,
+    setSessionDateDigits,
     setSlotStart,
     setSlotEnd,
     setSessionNote,
@@ -28,6 +46,14 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
   } = app
 
   const presentCount = roster.filter((student) => draft[student.rollNumber] === 'present').length
+  // Only nag once something has been typed, so the form is not born red.
+  const dateTouched = sessionDateDigits.length > 0
+  const dateInvalid = !sessionDateIsValid
+  const dateHint = !dateTouched
+    ? 'Required — day, month, year with no guessing'
+    : sessionDateIsValid
+      ? `Saved as ${sessionDate}`
+      : dateHintFor(sessionDateDigits)
 
   return (
     <Panel>
@@ -37,12 +63,7 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
         actions={
           <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 shadow-sm">
             <CalendarDays className="h-4 w-4 text-indigo-500" />
-            <input
-              type="date"
-              value={sessionDate}
-              onChange={(event) => setSessionDate(event.target.value)}
-              className="bg-transparent text-slate-700 outline-none"
-            />
+            <span className="text-xs uppercase tracking-[0.14em] text-slate-400">Nothing is recorded until you submit</span>
           </div>
         }
       />
@@ -59,10 +80,33 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
           <div className="mt-5 grid gap-3 md:grid-cols-3">
             <ClassPicker classNames={classNames} value={activeClassName} onChange={selectClass} label="Class folder" />
 
+            <Field label="Date (required)" invalid={dateTouched && dateInvalid} hint={dateHint}>
+              <div className="flex items-center gap-2">
+                <CalendarDays className="h-4 w-4 shrink-0 text-indigo-500" />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={formatDateForInput(sessionDateDigits)}
+                  onChange={(event) => setSessionDateDigits(sanitizeDateDigits(event.target.value))}
+                  placeholder="dd/mm/yyyy"
+                  aria-label="Session date, day month year"
+                  aria-invalid={dateTouched && dateInvalid}
+                  className="min-w-0 flex-1 bg-transparent text-base font-medium text-slate-700 outline-none placeholder:text-slate-300"
+                />
+              </div>
+            </Field>
+
             <Field
-              label="Slot"
-              invalid={!slotIsValid}
-              hint={slotIsValid ? 'Start and end are saved with the session' : 'End time must be after the start time'}
+              label="Slot (required)"
+              invalid={!slotIsValid && (slotStart.length > 0 || slotEnd.length > 0)}
+              hint={
+                slotIsValid
+                  ? 'Start and end are saved with the session'
+                  : slotStart.length > 0 || slotEnd.length > 0
+                    ? 'End time must be after the start time'
+                    : 'Required — start time at least'
+              }
             >
               <div className="flex items-center gap-2">
                 <Clock3 className="h-4 w-4 shrink-0 text-indigo-500" />
@@ -83,8 +127,10 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
                 />
               </div>
             </Field>
+          </div>
 
-            <Field label="Note (optional)">
+          <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 p-3">
+            <Field label="Note (optional)" hint="Not saved with the session, it is only for your own reference while marking">
               <input
                 value={sessionNote}
                 onChange={(event) => setSessionNote(event.target.value)}
@@ -96,7 +142,7 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 shadow-sm">
             <span className="font-mono text-[11px] text-slate-500">
-              {attendancePath(activeClassName, sessionDate.slice(0, 7))}
+              {sessionDateIsValid ? attendancePath(activeClassName, sessionDate.slice(0, 7)) : 'set a date to see the target file'}
               {slotRange ? ` · slot "${slotRange}"` : ''}
             </span>
             <div className="flex gap-2">
@@ -161,7 +207,7 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
           <div className="mt-6 flex justify-end">
             <PrimaryButton
               onClick={submitAttendance}
-              disabled={isSubmitting || roster.length === 0 || !slotIsValid}
+              disabled={isSubmitting || roster.length === 0 || !slotIsValid || !sessionDateIsValid}
             >
               <UploadCloud className="h-4 w-4" />
               {isSubmitting ? 'Uploading...' : 'Submit attendance'}
@@ -169,13 +215,19 @@ export function TakeAttendance({ app }: { app: DatasetController }) {
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              One {"<month>.csv"} per class; each submit appends a row per student.
+            <div className="flex items-start gap-2 text-xs text-slate-500">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+              <span>
+                One <span className="font-mono">{'<month>.csv'}</span> per class. Submitting a date and slot for the
+                first time adds a session; a row per student is saved.
+              </span>
             </div>
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <XCircle className="h-4 w-4 text-rose-500" />
-              Same date and slot appends a new session to that month.
+            <div className="flex items-start gap-2 text-xs text-slate-500">
+              <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
+              <span>
+                Submitting the same date and slot again merges into that session: anyone newly marked present is added,
+                and anyone already present stays present. It will not remove a present.
+              </span>
             </div>
           </div>
         </>
